@@ -16,6 +16,9 @@
         "dist"
     ],
     "scripts": {
+        "update:patch": "bun run format && npm version patch && git push --follow-tags",
+        "update:minor": "bun run format && npm version minor && git push --follow-tags",
+        "update:major": "bun run format && npm version major && git push --follow-tags",
         "dev": "bun run --watch src/index.ts",
         "build": "bun run scripts/build.ts",
         "format": "prettier --write .",
