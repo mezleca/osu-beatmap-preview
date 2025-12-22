@@ -1,0 +1,38 @@
+{
+    "name": "@rel-packages/osu-beatmap-preview",
+    "version": "0.1.0",
+    "description": "one of the beatmap preview of all time",
+    "type": "module",
+    "main": "dist/index.js",
+    "module": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "exports": {
+        ".": {
+            "import": "./dist/index.js",
+            "types": "./dist/index.d.ts"
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "dev": "bun run --watch src/index.ts",
+        "build": "bun run scripts/build.ts",
+        "format": "prettier --write .",
+        "type-check": "tsc --noEmit -p src/tsconfig.json",
+        "example": "bun run --hot example/server.ts"
+    },
+    "dependencies": {
+        "jszip": "^3.10.1"
+    },
+    "devDependencies": {
+        "@types/bun": "^1.1.0",
+        "typescript": "^5.3.0",
+        "prettier": "^3.7.4"
+    },
+    "author": "rel",
+    "license": "ISC",
+    "repository": {
+        "url": "https://github.com/mezleca/osu-beatmap-preview.git"
+    }
+}

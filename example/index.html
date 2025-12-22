@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>osu! Preview</title>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+
+            html,
+            body {
+                height: 100%;
+                font-family:
+                    system-ui,
+                    -apple-system,
+                    sans-serif;
+                background: #0d0d12;
+                color: #fff;
+                overflow: hidden;
+            }
+
+            .app {
+                display: flex;
+                flex-direction: column;
+                height: 100vh;
+            }
+
+            .header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 8px 16px;
+                background: #16161d;
+                border-bottom: 1px solid #2a2a35;
+                flex-shrink: 0;
+            }
+
+            .title-section {
+                min-width: 0;
+                flex: 1;
+            }
+
+            .title {
+                font-size: 13px;
+                font-weight: 500;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .subtitle {
+                font-size: 11px;
+                color: #888;
+            }
+
+            .controls {
+                display: flex;
+                gap: 6px;
+                align-items: center;
+                flex-shrink: 0;
+            }
+
+            input[type="file"] {
+                display: none;
+            }
+
+            .btn {
+                background: #252530;
+                border: 1px solid #3a3a45;
+                color: #fff;
+                padding: 6px 12px;
+                border-radius: 4px;
+                font-size: 12px;
+                cursor: pointer;
+            }
+
+            .btn:hover:not(:disabled) {
+                background: #303040;
+            }
+
+            .btn:disabled {
+                opacity: 0.4;
+                cursor: not-allowed;
+            }
+
+            .btn.primary {
+                background: #5865f2;
+                border-color: #5865f2;
+            }
+
+            .btn.primary:hover {
+                background: #4752c4;
+            }
+
+            .preview-area {
+                flex: 1;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: #000;
+                position: relative;
+                overflow: hidden;
+            }
+
+            .preview-area.drag-over {
+                background: #1a1a25;
+            }
+
+            .preview-area.drag-over::after {
+                content: "Drop beatmap here";
+                position: absolute;
+                color: #5865f2;
+                font-size: 18px;
+                font-weight: 500;
+            }
+
+            #bg {
+                position: absolute;
+                inset: 0;
+                background-size: cover;
+                background-position: center;
+                opacity: 0.3;
+                filter: blur(8px);
+            }
+
+            #preview {
+                position: relative;
+                max-width: 100%;
+                max-height: 100%;
+            }
+
+            .footer {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                padding: 8px 16px;
+                background: #16161d;
+                border-top: 1px solid #2a2a35;
+                flex-shrink: 0;
+            }
+
+            .time {
+                font-size: 11px;
+                color: #888;
+                font-variant-numeric: tabular-nums;
+                min-width: 90px;
+            }
+
+            .progress {
+                flex: 1;
+                height: 4px;
+                background: #252530;
+                border-radius: 2px;
+                cursor: pointer;
+                overflow: hidden;
+            }
+
+            .progress-fill {
+                height: 100%;
+                background: #5865f2;
+                width: 0%;
+            }
+
+            .mods {
+                display: flex;
+                gap: 4px;
+            }
+
+            .mod {
+                background: #252530;
+                border: 1px solid #3a3a45;
+                color: #888;
+                padding: 3px 6px;
+                border-radius: 3px;
+                font-size: 10px;
+                font-weight: 600;
+                cursor: pointer;
+            }
+
+            .mod:hover {
+                color: #fff;
+            }
+
+            .mod.active {
+                background: #5865f2;
+                border-color: #5865f2;
+                color: #fff;
+            }
+        </style>
+    </head>
+
+    <body>
+        <div class="app">
+            <div class="header">
+                <div class="title-section">
+                    <div class="title" id="title">Drop a .osz or .osu file to preview</div>
+                    <div class="subtitle" id="subtitle"></div>
+                </div>
+                <div class="controls">
+                    <label class="btn primary">
+                        Open
+                        <input type="file" id="file-input" accept=".osz,.osu" />
+                    </label>
+                    <button class="btn" id="play-btn" disabled>▶</button>
+                    <button class="btn" id="stop-btn" disabled>⏹</button>
+                </div>
+            </div>
+
+            <div class="preview-area" id="drop-zone">
+                <canvas id="preview" width="854" height="480"></canvas>
+            </div>
+
+            <div class="footer">
+                <span class="time" id="time">0:00 / 0:00</span>
+                <div class="progress" id="progress">
+                    <div class="progress-fill" id="progress-fill"></div>
+                </div>
+                <div class="mods">
+                    <button class="mod" data-mod="hd">HD</button>
+                    <button class="mod" data-mod="hr">HR</button>
+                    <button class="mod" data-mod="ez">EZ</button>
+                    <button class="mod" data-mod="dt">DT</button>
+                    <button class="mod" data-mod="ht">HT</button>
+                </div>
+            </div>
+        </div>
+
+        <script type="module" src="main.ts"></script>
+    </body>
+</html>
