@@ -1,4 +1,4 @@
-import type { IBeatmap, IHitObject } from "../types/beatmap";
+import type { IBeatmap, IHitObject, IBeatmapInfo } from "../types/beatmap";
 import { GameMode, SampleSet } from "../types/beatmap";
 import type { IBeatmapResources } from "../types/resources";
 import { type Result, ErrorCode, ok, err } from "../types/result";
@@ -13,7 +13,7 @@ import { ManiaRenderer } from "../renderer/mania/mania_renderer";
 import { AudioController } from "./audio_controller";
 import { VideoController } from "./video_controller";
 import { HitsoundController } from "./hitsound_controller";
-import { type ISkinConfig, DEFAULT_SKIN, merge_skin } from "../skin/skin_config";
+import { type ISkinConfig, merge_skin } from "../skin/skin_config";
 
 type PlayerEventMap = {
     timeupdate: [time: number, duration: number];
@@ -21,6 +21,9 @@ type PlayerEventMap = {
     loaded: [beatmap: IBeatmap, resources: IBeatmapResources];
     error: [code: ErrorCode, reason: string];
     statechange: [is_playing: boolean];
+    play: [];
+    pause: [];
+    seek: [time: number];
 };
 
 type PlayerEvent = keyof PlayerEventMap;
@@ -88,7 +91,7 @@ export class BeatmapPlayer {
         this.start_offset = options.start_time ?? -1;
         this.volume = options.volume ?? 0.5;
 
-        // initialize backend with high DPI setting
+        // initialize backend with high dpi setting
         this.backend.initialize(options.canvas, this.renderer_config.use_high_dpi);
 
         // initialize audio system
@@ -165,6 +168,7 @@ export class BeatmapPlayer {
     ): Promise<Result<IBeatmapResources>> {
         this.resources = {
             beatmap,
+            available_difficulties: [],
             files: new Map(),
             audio,
             background,
@@ -239,7 +243,11 @@ export class BeatmapPlayer {
                 const img = new Image();
                 img.src = URL.createObjectURL(this.resources.background);
                 await img.decode();
-                this.renderer.set_background(img);
+                this.renderer.set_background({
+                    source: img,
+                    width: img.width,
+                    height: img.height
+                });
 
                 // ensure we are ready to draw
                 this._is_loaded = true;
@@ -295,6 +303,7 @@ export class BeatmapPlayer {
         this.audio.play(this.start_offset);
         this.video?.play();
         this.start_render_loop();
+        this.emit("play");
         this.emit("statechange", true);
     }
 
@@ -307,6 +316,7 @@ export class BeatmapPlayer {
         this.audio.pause();
         this.video?.pause();
         this.stop_render_loop();
+        this.emit("pause");
         this.emit("statechange", false);
     }
 
@@ -333,8 +343,47 @@ export class BeatmapPlayer {
         this.audio.seek(this.start_offset);
         this.video?.seek(this.start_offset);
 
+        this.emit("seek", this.start_offset);
+
         // render frame at new position
         this.render_frame(this.start_offset);
+    }
+
+    async set_difficulty(index: number | string): Promise<Result<IBeatmapResources>> {
+        if (!this.resources) {
+            return err(ErrorCode.NotLoaded, "No beatmap resources loaded");
+        }
+
+        const was_playing = this.is_playing;
+        this.stop();
+
+        try {
+            const loader = new OszLoader();
+            // preserve existing files and options, just change difficulty
+            const result = await loader.load_from_files(this.resources.files, { difficulty: index });
+            this.resources = result;
+
+            // update raw content for preview time extraction
+            const selected_file = this.resources.available_difficulties.find((d) => d.version === this.resources!.beatmap.version)?.filename;
+            if (selected_file) {
+                const content = this.resources.files.get(selected_file);
+                if (content) {
+                    this._raw_osu_content = typeof content === "string" ? content : new TextDecoder().decode(content);
+                }
+            }
+
+            const setup_result = await this.setup();
+
+            if (setup_result.success && was_playing) {
+                this.play();
+            }
+
+            return setup_result;
+        } catch (e) {
+            const reason = e instanceof Error ? e.message : String(e);
+            this.emit("error", ErrorCode.InvalidBeatmap, reason);
+            return err(ErrorCode.InvalidBeatmap, reason);
+        }
     }
 
     private update_hit_index(time: number): void {
@@ -407,8 +456,26 @@ export class BeatmapPlayer {
         return this._is_loaded;
     }
 
+    get mode(): string {
+        if (!this.resources) return "standard";
+        switch (this.resources.beatmap.mode) {
+            case 1:
+                return "taiko";
+            case 2:
+                return "catch";
+            case 3:
+                return "mania";
+            default:
+                return "standard";
+        }
+    }
+
     get beatmap(): IBeatmap | null {
         return this.resources?.beatmap ?? null;
+    }
+
+    get available_difficulties(): IBeatmapInfo[] {
+        return this.resources?.available_difficulties ?? [];
     }
 
     get background(): Blob | undefined {
@@ -424,6 +491,26 @@ export class BeatmapPlayer {
         this.calculate_layout(width, height, playfield_scale);
 
         if (this._is_loaded) {
+            requestAnimationFrame(() => this.render_frame(this.current_time));
+        }
+    }
+
+    update_config(config: Partial<IRendererConfig>): void {
+        this.renderer_config = { ...this.renderer_config, ...config };
+        this.renderer?.update_config(this.renderer_config);
+
+        if (this._is_loaded) {
+            requestAnimationFrame(() => this.render_frame(this.current_time));
+        }
+    }
+
+    set_skin(skin: Partial<ISkinConfig>): void {
+        this.skin = merge_skin(skin);
+
+        // renderer needs to be recreated with new skin
+        if (this._is_loaded && this.resources?.beatmap) {
+            this.renderer = this.create_renderer(this.resources.beatmap);
+            this.renderer.initialize(this.resources.beatmap);
             requestAnimationFrame(() => this.render_frame(this.current_time));
         }
     }
@@ -486,7 +573,7 @@ export class BeatmapPlayer {
         const target_width = 512;
         const target_height = 384;
 
-        let fill = 0.8;
+        let fill = 0.9;
         if (typeof playfield_scale === "number") {
             fill = playfield_scale;
         }

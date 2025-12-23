@@ -1,12 +1,12 @@
 import type { IBeatmap, IHitObject, ISliderData, ITimingPoint } from "../../types/beatmap";
 import { is_circle, is_slider, is_spinner, is_new_combo } from "../../types/beatmap";
-import { Mods } from "../../types/mods";
+import { Mods, has_mod } from "../../types/mods";
 import { calculate_preempt, calculate_fade_in, calculate_radius } from "../../math/difficulty";
-import { get_adjusted_difficulty, get_rate_multiplier } from "../../mods";
+import { get_adjusted_difficulty } from "../../mods";
 import { flatten_bezier, flatten_linear, flatten_perfect, flatten_catmull } from "../../math/curves";
 import { vec2_sub, vec2_len, vec2_lerp, vec2_normalize, lerp, clamp, type Vec2 } from "../../math/vector2";
 import { BaseRenderer, type IRendererConfig, DEFAULT_RENDERER_CONFIG } from "../base_renderer";
-import type { IRenderBackend } from "../backend/render_backend";
+import type { IRenderBackend, RenderImage } from "../backend/render_backend";
 import type { ISkinConfig } from "../../skin/skin_config";
 import { get_combo_color } from "../../skin/skin_config";
 
@@ -18,24 +18,18 @@ export class StandardRenderer extends BaseRenderer {
     private preempt: number = 1200;
     private fade_in: number = 600;
     private timing_points: ITimingPoint[] = [];
-    private use_hidden: boolean = false;
-    private use_hard_rock: boolean = false;
 
-    // cache for rendered sliders (to avoid expensive masking every frame)
+    // cache for rendered sliders
     private slider_cache: Map<
         IHitObject,
         {
-            canvas: HTMLCanvasElement;
+            image: RenderImage;
             scale: number;
-            min_x: number;
-            min_y: number;
         }
     > = new Map();
 
     constructor(backend: IRenderBackend, skin: ISkinConfig, mods: number = 0, config: IRendererConfig = DEFAULT_RENDERER_CONFIG) {
         super(backend, skin, mods, config);
-        this.use_hidden = (mods & Mods.Hidden) !== 0;
-        this.use_hard_rock = (mods & Mods.HardRock) !== 0;
     }
 
     initialize(beatmap: IBeatmap): void {
@@ -48,7 +42,7 @@ export class StandardRenderer extends BaseRenderer {
         // clear caches when map changes
         this.slider_cache.clear();
 
-        const difficulty = get_adjusted_difficulty(beatmap.cs, beatmap.ar, beatmap.od, beatmap.hp, this.mods);
+        const difficulty = get_adjusted_difficulty(beatmap.cs, beatmap.ar, 0, 0, this.mods);
 
         this.radius = calculate_radius(difficulty.cs);
         this.preempt = calculate_preempt(difficulty.ar);
@@ -59,8 +53,6 @@ export class StandardRenderer extends BaseRenderer {
 
     set_mods(mods: number): void {
         this.mods = mods;
-        this.use_hidden = (mods & Mods.Hidden) !== 0;
-        this.use_hard_rock = (mods & Mods.HardRock) !== 0;
 
         if (this.beatmap) {
             this.initialize(this.beatmap);
@@ -101,7 +93,7 @@ export class StandardRenderer extends BaseRenderer {
             if (is_slider(obj)) {
                 const data = obj.data as ISliderData;
 
-                if (this.use_hard_rock) {
+                if (has_mod(this.mods, Mods.HardRock)) {
                     data.pos = [data.pos[0], flip_y(data.pos[1])];
                     data.control_points = data.control_points.map((p) => [p[0], flip_y(p[1])] as [number, number]);
                 }
@@ -110,6 +102,7 @@ export class StandardRenderer extends BaseRenderer {
 
                 const timing = this.get_timing_at(obj.time);
                 const duration = (data.distance / (100 * this.beatmap.sv)) * timing.ms_per_beat;
+
                 data.duration = duration;
                 obj.end_time = obj.time + duration * data.repetitions;
                 obj.end_pos = this.get_slider_position(data, obj.end_time - obj.time, duration);
@@ -118,7 +111,7 @@ export class StandardRenderer extends BaseRenderer {
             } else {
                 const data = obj.data as { pos: Vec2 };
 
-                if (this.use_hard_rock) {
+                if (has_mod(this.mods, Mods.HardRock)) {
                     data.pos = [data.pos[0], flip_y(data.pos[1])];
                 }
 
@@ -128,16 +121,17 @@ export class StandardRenderer extends BaseRenderer {
     }
 
     private compute_slider_path(slider: ISliderData): Vec2[] {
+        if (slider.path_type === "L") {
+            return flatten_linear(slider.pos, slider.control_points[0], slider.distance);
+        }
+
         const all_points: Vec2[] = [slider.pos, ...slider.control_points];
 
         switch (slider.path_type) {
-            case "L":
-                return flatten_linear(slider.pos, slider.control_points[0], slider.distance);
             case "P":
                 return flatten_perfect(all_points, slider.distance);
             case "C":
                 return flatten_catmull(all_points);
-            case "B":
             default:
                 return this.flatten_multibezier(all_points, slider.distance);
         }
@@ -148,22 +142,17 @@ export class StandardRenderer extends BaseRenderer {
         let current: Vec2[] = [points[0]];
 
         for (let i = 1; i < points.length; i++) {
-            const prev = points[i - 1];
-            const cur = points[i];
+            const [prev, cur] = [points[i - 1], points[i]];
 
             if (prev[0] === cur[0] && prev[1] === cur[1]) {
-                if (current.length > 1) {
-                    segments.push(current);
-                }
+                if (current.length > 1) segments.push(current);
                 current = [cur];
             } else {
                 current.push(cur);
             }
         }
 
-        if (current.length > 1) {
-            segments.push(current);
-        }
+        if (current.length > 1) segments.push(current);
 
         const all_points: Vec2[] = [];
         for (const segment of segments) {
@@ -230,25 +219,28 @@ export class StandardRenderer extends BaseRenderer {
             }
         }
 
-        // draw each object in reverse time order (later first = at back, earlier on top)
+        // draw in two passes to ensure overlays (approach circles, slider balls) are always on top
+        // reverse time order: later objects at back, earlier objects on top
         visible.reverse();
+
         for (const obj of visible) {
             if (is_slider(obj)) {
                 this.draw_slider(obj, time);
-                if (!this.use_hidden && time <= obj.time) {
-                    this.draw_approach_circle(obj, time);
-                }
             } else if (is_circle(obj)) {
                 this.draw_hit_circle(obj, time);
-                if (!this.use_hidden && time <= obj.time) {
-                    this.draw_approach_circle(obj, time);
-                }
             } else if (is_spinner(obj)) {
                 this.draw_spinner(obj, time);
             }
+        }
 
-            // follow circle for active sliders
-            if (is_slider(obj) && time > obj.time && time <= obj.end_time) {
+        for (const obj of visible) {
+            const has_approach_circle = !has_mod(this.mods, Mods.Hidden) && time <= obj.time && this.skin.enable_approach_circle;
+
+            if (has_approach_circle && (is_slider(obj) || is_circle(obj))) {
+                this.draw_approach_circle(obj, time);
+            }
+
+            if (is_slider(obj) && time > obj.time && time <= obj.end_time + 240) {
                 this.draw_follow_circle(obj, time);
             }
         }
@@ -256,38 +248,10 @@ export class StandardRenderer extends BaseRenderer {
         backend.restore();
     }
 
-    private get_circle_opacity(obj: IHitObject, time: number): number {
-        const appear_time = obj.time - this.preempt;
-
-        if (this.use_hidden) {
-            const hd_fade_in = this.preempt * 0.4;
-            const fade_out_start = appear_time + hd_fade_in;
-            const fade_out_duration = this.preempt * 0.3;
-
-            if (time < appear_time) return 0;
-            if (time < fade_out_start) {
-                return clamp((time - appear_time) / hd_fade_in, 0, 1);
-            }
-            const fade_t = clamp((time - fade_out_start) / fade_out_duration, 0, 1);
-            return 1 - fade_t;
-        }
-
-        if (time < appear_time) return 0;
-        let opacity = clamp((time - appear_time) / this.fade_in, 0, 1);
-
-        // fade out after hit (150ms)
-        if (time > obj.end_time) {
-            const fade_t = clamp((time - obj.end_time) / 150, 0, 1);
-            opacity = 1 - ease_out_cubic(fade_t);
-        }
-
-        return clamp(opacity, 0, 1);
-    }
-
     private get_slider_body_opacity(obj: IHitObject, time: number): number {
         const appear_time = obj.time - this.preempt;
 
-        if (this.use_hidden) {
+        if (has_mod(this.mods, Mods.Hidden)) {
             // HD: "long fade" - fades out gradually from fade_in completion until slider ends
             const hd_fade_in = this.preempt * 0.4;
             const fade_in_complete_time = appear_time + hd_fade_in;
@@ -319,8 +283,7 @@ export class StandardRenderer extends BaseRenderer {
     }
 
     private draw_approach_circle(obj: IHitObject, time: number): void {
-        if (this.use_hidden) return;
-
+        if (has_mod(this.mods, Mods.Hidden)) return;
         const { backend, skin, radius, preempt, fade_in } = this;
         const pos = (obj.data as { pos: Vec2 }).pos;
         const appear_time = obj.time - preempt;
@@ -341,10 +304,10 @@ export class StandardRenderer extends BaseRenderer {
     }
 
     private draw_hit_circle(obj: IHitObject, time: number): void {
-        const { backend, skin, radius } = this;
+        const { backend, skin, radius, fade_in, preempt } = this;
 
         const pos = (obj.data as { pos: Vec2 }).pos;
-        const appear_time = obj.time - this.preempt;
+        const appear_time = obj.time - preempt;
         const hit_anim_duration = 240;
 
         // skip if not visible yet
@@ -357,7 +320,7 @@ export class StandardRenderer extends BaseRenderer {
 
         // fade in phase
         if (time < obj.time) {
-            if (this.use_hidden) {
+            if (has_mod(this.mods, Mods.Hidden)) {
                 const hd_fade_in = this.preempt * 0.4;
                 const fade_out_start = appear_time + hd_fade_in;
                 const fade_out_duration = this.preempt * 0.3;
@@ -374,10 +337,18 @@ export class StandardRenderer extends BaseRenderer {
         }
         // hit animation phase (after hit time)
         else {
+            // with HD, circle already faded - skip hit animation
+            if (has_mod(this.mods, Mods.Hidden)) {
+                return;
+            }
+
+            // skip hit animation if disabled
+            if (!skin.enable_hit_animations) {
+                return;
+            }
+
             const t = clamp((time - obj.end_time) / hit_anim_duration, 0, 1);
-            // scale up to 1.4x with easing out
-            scale = 1 + 0.4 * ease_out_cubic(t);
-            // fade out
+            scale = 1 + (skin.hit_animation_scale - 1) * ease_out_cubic(t);
             opacity = 1 - ease_out_cubic(t);
         }
 
@@ -394,10 +365,11 @@ export class StandardRenderer extends BaseRenderer {
         // only draw number before hit
         if (time < obj.time) {
             const font_size = radius * 0.8;
+            const baseline_offset = font_size * 0.05;
             backend.draw_text(
                 String(obj.combo_count),
                 pos[0],
-                pos[1],
+                pos[1] + baseline_offset,
                 `600 ${font_size}px ${skin.font_family}`,
                 "rgba(255,255,255,1)",
                 "center",
@@ -429,7 +401,7 @@ export class StandardRenderer extends BaseRenderer {
 
         // if using transparency, we need to mask out the border center to avoid it bleeding through
         if (skin.slider_body_opacity < 1 && skin.slider_border_opacity > 0) {
-            this.draw_masked_slider(obj, path, radius, body_radius, combo_color, body_opacity);
+            this.draw_masked_slider(obj, path, combo_color, body_opacity, skin.slider_body_opacity, skin.slider_border_opacity);
         } else {
             // standard drawing (fast path)
             backend.save();
@@ -471,7 +443,7 @@ export class StandardRenderer extends BaseRenderer {
         let head_opacity = 0;
         let head_scale = 1;
 
-        if (this.use_hidden) {
+        if (has_mod(this.mods, Mods.Hidden)) {
             const hd_fade_in = this.preempt * 0.4;
             const fade_out_start = appear_time + hd_fade_in;
             const fade_out_duration = this.preempt * 0.3;
@@ -528,10 +500,11 @@ export class StandardRenderer extends BaseRenderer {
             backend.draw_circle(pos[0], pos[1], circle_size, get_combo_color(skin, obj.combo_number, 1), "rgba(255,255,255,1)", border_width);
 
             const font_size = radius * 0.8 * head_scale;
+            const baseline_offset = font_size * 0.05;
             backend.draw_text(
                 String(obj.combo_count),
                 pos[0],
-                pos[1],
+                pos[1] + baseline_offset,
                 `600 ${font_size}px ${skin.font_family}`,
                 "rgba(255,255,255,1)",
                 "center",
@@ -543,147 +516,110 @@ export class StandardRenderer extends BaseRenderer {
     }
 
     private handle_reverse_arrows(obj: IHitObject, data: ISliderData, path: Vec2[], time: number): void {
-        const { radius } = this;
-        const elapsed = Math.max(0, time - obj.time);
+        const { radius, preempt, fade_in } = this;
+        const appear_time = obj.time - preempt;
         const duration = data.duration!;
-        const current_repeat = Math.floor(elapsed / duration);
-        const remaining_repeats = data.repetitions - 1 - current_repeat;
 
-        if (remaining_repeats >= 1 && current_repeat % 2 === 0) {
-            this.draw_reverse_arrow(path, radius, true);
+        // base opacity for arrows
+        let base_opacity = 1.0;
+        if (has_mod(this.mods, Mods.Hidden)) {
+            const hd_fade_in = preempt * 0.4;
+            const fade_out_start = appear_time + hd_fade_in;
+            const fade_out_duration = preempt * 0.3;
+
+            if (time < appear_time) {
+                base_opacity = 0;
+            } else if (time < fade_out_start) {
+                base_opacity = clamp((time - appear_time) / hd_fade_in, 0, 1);
+            } else {
+                const fade_t = clamp((time - fade_out_start) / fade_out_duration, 0, 1);
+                base_opacity = 1 - fade_t;
+            }
+        } else {
+            if (time < appear_time) {
+                base_opacity = 0;
+            } else if (time < obj.time) {
+                base_opacity = clamp((time - appear_time) / fade_in, 0, 1);
+            }
         }
-        if (remaining_repeats >= 1 && current_repeat % 2 === 1) {
-            this.draw_reverse_arrow(path, radius, false);
+
+        if (base_opacity <= 0) return;
+
+        const elapsed = Math.max(0, time - obj.time);
+        const current_repeat = Math.floor(elapsed / duration);
+
+        // draw reverse arrow at end of slider if there are remaining repeats
+        const remaining_at_end = data.repetitions - 1 - current_repeat;
+        if (remaining_at_end >= 1) {
+            const at_end = current_repeat % 2 === 0;
+            this.draw_reverse_arrow(path, at_end, time, base_opacity);
         }
+
+        // draw both arrows before slider starts
         if (time < obj.time) {
-            this.draw_reverse_arrow(path, radius, true);
+            this.draw_reverse_arrow(path, true, time, base_opacity);
             if (data.repetitions > 2) {
-                this.draw_reverse_arrow(path, radius, false);
+                this.draw_reverse_arrow(path, false, time, base_opacity);
             }
         }
     }
 
-    private draw_masked_slider(obj: IHitObject, path: Vec2[], radius: number, body_radius: number, combo_color: string, body_opacity: number): void {
-        const { backend, skin, config } = this;
+    private draw_masked_slider(
+        obj: IHitObject,
+        path: Vec2[],
+        combo_color: string,
+        body_opacity: number,
+        skin_body_opacity: number,
+        skin_border_opacity: number
+    ): void {
+        const { backend, config, radius } = this;
 
         // check cache
-        const cached = this.slider_cache.get(obj);
+        const cache = this.slider_cache.get(obj);
 
         // validate cache (must match current scale)
-        if (cached && Math.abs(cached.scale - config.scale) < 0.001) {
-            // draw cached image
+        if (cache && Math.abs(cache.scale - config.scale) < 0.001) {
             backend.save();
             if (config.scale !== 0) {
                 backend.scale(1 / config.scale, 1 / config.scale);
                 backend.translate(-config.offset_x, -config.offset_y);
             }
 
-            // calculate screen position
-            const draw_x = Math.floor(cached.min_x * config.scale + config.offset_x);
-            const draw_y = Math.floor(cached.min_y * config.scale + config.offset_y);
+            const min_x = cache.image.min_x || 0;
+            const min_y = cache.image.min_y || 0;
+            const draw_x = Math.floor(min_x * config.scale + config.offset_x);
+            const draw_y = Math.floor(min_y * config.scale + config.offset_y);
 
-            // apply global alpha for fade in/out
             backend.set_alpha(body_opacity);
-            backend.draw_image(cached.canvas, draw_x, draw_y);
+            backend.draw_image(cache.image, draw_x, draw_y);
             backend.restore();
             return;
         }
 
-        // --- Cache Miss: Render to new canvas ---
+        // cache miss, render to new canvas handle
+        const image = backend.render_slider_to_image(path, radius, "white", combo_color, config.scale, skin_body_opacity, skin_border_opacity);
+        if (!image) return;
 
-        // calculate bounding box independent of offset (using raw OsuPixels)
-        let min_x = Infinity,
-            min_y = Infinity,
-            max_x = -Infinity,
-            max_y = -Infinity;
-        for (const p of path) {
-            if (p[0] < min_x) min_x = p[0];
-            if (p[0] > max_x) max_x = p[0];
-            if (p[1] < min_y) min_y = p[1];
-            if (p[1] > max_y) max_y = p[1];
-        }
-
-        // padding
-        const padding = radius + 2;
-        min_x -= padding;
-        min_y -= padding;
-        max_x += padding;
-        max_y += padding;
-
-        // dimensions at current scale
-        const width = Math.ceil((max_x - min_x) * config.scale);
-        const height = Math.ceil((max_y - min_y) * config.scale);
-
-        if (width <= 0 || height <= 0) return;
-
-        // create canvas for this slider
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-
-        // Render Logic
-        ctx.save();
-
-        // Transform: Map OsuPixels to CanvasPixels [0, width]
-        ctx.scale(config.scale, config.scale);
-        ctx.translate(-min_x, -min_y);
-
-        // trace path
-        ctx.beginPath();
-        if (path.length > 0) {
-            ctx.moveTo(path[0][0], path[0][1]);
-            for (let i = 1; i < path.length; i++) {
-                ctx.lineTo(path[i][0], path[i][1]);
-            }
-        }
-
-        // white border (opaque)
-        ctx.globalAlpha = skin.slider_border_opacity;
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
-        ctx.lineWidth = radius * 2;
-        ctx.strokeStyle = "white";
-        ctx.stroke();
-
-        // erase center
-        ctx.globalCompositeOperation = "destination-out";
-        ctx.lineWidth = body_radius * 2;
-        ctx.strokeStyle = "white";
-        ctx.globalAlpha = 1.0;
-        ctx.stroke();
-
-        // body color
-        ctx.globalCompositeOperation = "source-over";
-        ctx.lineWidth = body_radius * 2;
-        ctx.strokeStyle = combo_color;
-        ctx.globalAlpha = skin.slider_body_opacity;
-        ctx.stroke();
-
-        ctx.restore();
-
-        // store in cache
+        // cache it
         this.slider_cache.set(obj, {
-            canvas,
-            scale: config.scale,
-            min_x,
-            min_y
+            image,
+            scale: config.scale
         });
 
-        // draw newly created cache immediately
+        // draw immediately
         backend.save();
-
         if (config.scale !== 0) {
             backend.scale(1 / config.scale, 1 / config.scale);
             backend.translate(-config.offset_x, -config.offset_y);
         }
 
+        const min_x = image.min_x || 0;
+        const min_y = image.min_y || 0;
         const draw_x = Math.floor(min_x * config.scale + config.offset_x);
         const draw_y = Math.floor(min_y * config.scale + config.offset_y);
 
         backend.set_alpha(body_opacity);
-        backend.draw_image(canvas, draw_x, draw_y);
+        backend.draw_image(image, draw_x, draw_y);
         backend.restore();
     }
 
@@ -708,7 +644,7 @@ export class StandardRenderer extends BaseRenderer {
 
             let opacity = 1.0;
 
-            if (this.use_hidden) {
+            if (has_mod(this.mods, Mods.Hidden)) {
                 const tick_time = obj.time + (d / slider_length) * data.duration!;
                 const fade_out_time = tick_time - Math.min(1000, preempt * 0.7);
                 const appear_time = tick_time - preempt;
@@ -758,73 +694,162 @@ export class StandardRenderer extends BaseRenderer {
         return path[path.length - 1];
     }
 
-    private draw_reverse_arrow(path: Vec2[], radius: number, at_end: boolean): void {
-        const { backend } = this;
+    private draw_reverse_arrow(path: Vec2[], at_end: boolean, time: number, opacity: number): void {
+        const { backend, radius } = this;
+
+        if (opacity <= 0) return;
 
         let pos: Vec2;
         let dir: Vec2;
 
+        // get position and calculate direction from curve
         if (at_end) {
             pos = path[path.length - 1];
-            const prev = path[Math.max(0, path.length - 2)];
-            dir = vec2_normalize(vec2_sub(prev, pos));
+            // look backwards along the path for direction
+            let aim_point = path[path.length - 1];
+            for (let i = path.length - 2; i >= 0; i--) {
+                const dx = path[i][0] - pos[0];
+                const dy = path[i][1] - pos[1];
+                if (dx * dx + dy * dy > 1) {
+                    aim_point = path[i];
+                    break;
+                }
+            }
+            dir = vec2_normalize(vec2_sub(aim_point, pos));
         } else {
             pos = path[0];
-            const next = path[Math.min(1, path.length - 1)];
-            dir = vec2_normalize(vec2_sub(next, pos));
+            // look forwards along the path for direction
+            let aim_point = path[0];
+            for (let i = 1; i < path.length; i++) {
+                const dx = path[i][0] - pos[0];
+                const dy = path[i][1] - pos[1];
+                if (dx * dx + dy * dy > 1) {
+                    aim_point = path[i];
+                    break;
+                }
+            }
+            dir = vec2_normalize(vec2_sub(aim_point, pos));
         }
 
-        const arrow_size = radius * 0.5;
+        // pulsing animation (osu! lazer style: 1.0 -> 1.3 over 300ms loop)
+        const loop_duration = 300;
+        const move_out_duration = 35;
+        const move_in_duration = 250;
+        const loop_time = time % loop_duration;
+
+        let pulse_scale = 1.0;
+        if (loop_time < move_out_duration) {
+            pulse_scale = 1.0 + (loop_time / move_out_duration) * 0.3;
+        } else {
+            const t = (loop_time - move_out_duration) / move_in_duration;
+            pulse_scale = 1.3 - t * 0.3;
+        }
+
+        const arrow_size = radius * 0.6 * pulse_scale;
         const angle = Math.atan2(dir[1], dir[0]);
-        const wing_angle = Math.PI / 4;
-        const wing_len = arrow_size;
 
-        const left_x = pos[0] + Math.cos(angle - wing_angle) * wing_len;
-        const left_y = pos[1] + Math.sin(angle - wing_angle) * wing_len;
-        const right_x = pos[0] + Math.cos(angle + wing_angle) * wing_len;
-        const right_y = pos[1] + Math.sin(angle + wing_angle) * wing_len;
+        // draw chevron shape (like osu! lazer ">") pointing in direction
+        const chevron_spread = Math.PI / 3.5;
+        const wing_len = arrow_size * 0.8;
+        const tip_offset = arrow_size * 0.25;
 
+        // tip of chevron offset from center
+        const tip_x = pos[0] + Math.cos(angle) * tip_offset;
+        const tip_y = pos[1] + Math.sin(angle) * tip_offset;
+
+        // left and right wings
+        const left_x = tip_x - Math.cos(angle - chevron_spread) * wing_len;
+        const left_y = tip_y - Math.sin(angle - chevron_spread) * wing_len;
+        const right_x = tip_x - Math.cos(angle + chevron_spread) * wing_len;
+        const right_y = tip_y - Math.sin(angle + chevron_spread) * wing_len;
+
+        backend.set_alpha(opacity);
         backend.begin_path();
         backend.move_to(left_x, left_y);
-        backend.line_to(pos[0], pos[1]);
+        backend.line_to(tip_x, tip_y);
         backend.line_to(right_x, right_y);
-        backend.stroke_path("rgba(255,255,255,1)", 4, "round", "round");
+        backend.stroke_path("rgba(255,255,255,1)", 3 * pulse_scale, "round", "round");
+        backend.set_alpha(1);
     }
 
     private draw_follow_circle(obj: IHitObject, time: number): void {
-        const { backend, skin, radius, fade_in } = this;
+        const { backend, skin, radius } = this;
         const data = obj.data as ISliderData;
-        const pos = this.get_slider_position(data, time - obj.time, data.duration!);
+        const duration = data.duration!;
+        const total_duration = duration * data.repetitions;
+        const elapsed = Math.min(time - obj.time, total_duration);
+        const pos = this.get_slider_position(data, elapsed, duration);
 
-        let opacity: number;
+        // slider ball should be visible during entire slider duration
+        // follow circle can persist slightly after for fade out
+        const after_end_delay = 240;
+        if (time > obj.end_time + after_end_delay) return;
 
-        if (this.use_hidden) {
-            if (time < obj.time - fade_in) {
-                opacity = 0;
-            } else if (time < obj.time) {
-                opacity = (time - (obj.time - fade_in)) / fade_in;
-            } else if (time <= obj.end_time) {
-                opacity = 1;
-            } else {
-                opacity = 1 - clamp((time - obj.end_time) / 100, 0, 1);
-            }
-        } else {
-            opacity = this.get_slider_body_opacity(obj, time);
+        // pulsing animation while holding slider
+        const pulse_speed = 0.008;
+        const pulse = 1 + Math.sin(time * pulse_speed) * 0.08;
+
+        // follow circle should grow in at start
+        let scale_factor = 1.0;
+        const GROW_DURATION = 100;
+
+        if (elapsed < GROW_DURATION) {
+            const t = clamp(elapsed / GROW_DURATION, 0, 1);
+            scale_factor = 0.5 + t * 0.5;
         }
 
-        if (opacity <= 0) return;
+        let follow_opacity = skin.follow_circle_opacity;
 
-        const circle_size = radius * (1 - skin.circle_border_width / 2);
-        const border_width = radius * skin.circle_border_width;
+        // Hidden mod: follow circle (ball + ring) should fade out
+        if (has_mod(this.mods, Mods.Hidden)) {
+            const appear_time = obj.time - this.preempt;
+            const hd_fade_in = this.preempt * 0.4;
+            const fade_out_start = appear_time + hd_fade_in;
+            const fade_out_duration = this.preempt * 0.3;
 
-        backend.set_alpha(opacity);
+            if (time < fade_out_start) {
+                follow_opacity *= clamp((time - appear_time) / hd_fade_in, 0, 1);
+            } else {
+                const fade_t = clamp((time - fade_out_start) / fade_out_duration, 0, 1);
+                follow_opacity *= 1 - fade_t;
+            }
+        }
 
-        backend.draw_circle(pos[0], pos[1], circle_size, get_combo_color(skin, obj.combo_number, 0.5), "rgba(255,255,255,1)", border_width);
+        // fade out and scale out after slider ends
+        if (time > obj.end_time) {
+            const out_t = clamp((time - obj.end_time) / 240, 0, 1);
+            follow_opacity *= 1 - out_t;
+            scale_factor *= 1 + out_t * 0.3; // expand more for "wow" effect
+        }
 
-        const pulse = 1 + Math.sin(time * 0.01) * 0.05;
+        if (follow_opacity <= 0) return;
+
+        // draw slider ball (inner circle at slider position)
+        if (skin.enable_slider_ball) {
+            const ball_size = radius * 0.85; // ball doesn't expand, only the ring does
+
+            // ball fades out quickly after slider ends (100ms)
+            let ball_alpha = follow_opacity * (skin.slider_ball_opacity / skin.follow_circle_opacity);
+            if (time > obj.end_time) {
+                const ball_out_t = clamp((time - obj.end_time) / 100, 0, 1);
+                ball_alpha *= 1 - ball_out_t;
+            }
+
+            if (ball_alpha > 0) {
+                backend.set_alpha(ball_alpha);
+                backend.draw_circle(pos[0], pos[1], ball_size, get_combo_color(skin, obj.combo_number, 0.7), "rgba(255,255,255,0.9)", radius * 0.12);
+            }
+        }
+
+        // draw follow circle (outer ring with pulse)
+        const follow_size = radius * skin.follow_circle_factor * pulse * scale_factor;
+        const ring_color = skin.follow_circle_use_combo_color ? get_combo_color(skin, obj.combo_number, 1.0) : skin.follow_circle_color;
+
+        // ring should NOT fade out in HD, just like the slider ball
+        backend.set_alpha(follow_opacity);
         backend.begin_path();
-        backend.arc_to(pos[0], pos[1], circle_size * skin.follow_circle_factor * pulse, 0, Math.PI * 2);
-        backend.stroke_path("rgba(255,255,255,0.7)", skin.follow_circle_width);
+        backend.arc_to(pos[0], pos[1], follow_size, 0, Math.PI * 2);
+        backend.stroke_path(ring_color, skin.follow_circle_width);
 
         backend.set_alpha(1);
     }
@@ -866,7 +891,15 @@ export class StandardRenderer extends BaseRenderer {
 
     private draw_spinner(obj: IHitObject, time: number): void {
         const { backend, skin } = this;
-        const opacity = this.get_circle_opacity(obj, time);
+        // Spinners should NOT be affected by Hidden mod
+        const appear_time = obj.time - this.preempt;
+        if (time < appear_time) return;
+
+        let opacity = clamp((time - appear_time) / this.fade_in, 0, 1);
+        if (time > obj.end_time) {
+            const fade_t = clamp((time - obj.end_time) / 200, 0, 1);
+            opacity = 1 - ease_out_cubic(fade_t);
+        }
 
         if (opacity <= 0) return;
 
@@ -889,7 +922,7 @@ export class StandardRenderer extends BaseRenderer {
     }
 
     private draw_follow_point(prev: IHitObject, next: IHitObject, time: number): void {
-        if (this.use_hidden) return;
+        if (has_mod(this.mods, Mods.Hidden)) return;
         if (prev.combo_number !== next.combo_number) return;
 
         const { backend, skin } = this;

@@ -1,4 +1,4 @@
-import type { IRenderBackend } from "./render_backend";
+import type { IRenderBackend, GradientStop, RenderImage, LineCap, LineJoin, TextAlign, TextBaseline, CompositeOperation } from "./render_backend";
 
 export class CanvasBackend implements IRenderBackend {
     private ctx!: CanvasRenderingContext2D;
@@ -13,20 +13,18 @@ export class CanvasBackend implements IRenderBackend {
         return this._height;
     }
 
-    initialize(canvas: HTMLCanvasElement, use_high_dpi: boolean = true): void {
-        // high DPI support for sharper rendering
+    initialize(container: HTMLCanvasElement, use_high_dpi: boolean = true): void {
         this._dpr = use_high_dpi ? window.devicePixelRatio || 1 : 1;
 
-        // set canvas size with DPI scaling
-        const display_width = canvas.clientWidth || canvas.width;
-        const display_height = canvas.clientHeight || canvas.height;
+        const display_width = container.clientWidth || container.width;
+        const display_height = container.clientHeight || container.height;
 
-        canvas.width = display_width * this._dpr;
-        canvas.height = display_height * this._dpr;
+        container.width = display_width * this._dpr;
+        container.height = display_height * this._dpr;
 
-        const ctx = canvas.getContext("2d", {
+        const ctx = container.getContext("2d", {
             alpha: true,
-            desynchronized: true // reduces latency
+            desynchronized: true
         });
 
         if (!ctx) {
@@ -37,10 +35,7 @@ export class CanvasBackend implements IRenderBackend {
         this._width = display_width;
         this._height = display_height;
 
-        // scale context for high DPI
         ctx.scale(this._dpr, this._dpr);
-
-        // enable image smoothing for better anti-aliasing
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = "high";
     }
@@ -53,35 +48,28 @@ export class CanvasBackend implements IRenderBackend {
     }
 
     dispose(): void {
-        // nothing to dispose for Canvas 2D
+        // no-op for canvas
     }
 
     resize(width: number, height: number): void {
         this._width = width;
         this._height = height;
-
-        // update DPR in case it changed (e.g. monitor switch)
         this._dpr = window.devicePixelRatio || 1;
 
         const canvas = this.ctx.canvas;
-        // set internal resolution (render buffer)
         canvas.width = width * this._dpr;
         canvas.height = height * this._dpr;
-
-        // ensure display size matches logical size
         canvas.style.width = `${width}px`;
         canvas.style.height = `${height}px`;
 
         this.ctx.resetTransform();
         this.ctx.scale(this._dpr, this._dpr);
-
         this.ctx.imageSmoothingEnabled = true;
         this.ctx.imageSmoothingQuality = "high";
     }
 
     draw_circle(x: number, y: number, radius: number, fill_color: string, stroke_color?: string, stroke_width?: number): void {
         const ctx = this.ctx;
-
         ctx.beginPath();
         ctx.arc(x, y, radius, 0, Math.PI * 2);
 
@@ -120,20 +108,33 @@ export class CanvasBackend implements IRenderBackend {
         this.ctx.fillRect(x, y, width, height);
     }
 
+    draw_rect_gradient(x: number, y: number, width: number, height: number, gradient: any): void {
+        this.ctx.fillStyle = gradient;
+        this.ctx.fillRect(x, y, width, height);
+    }
+
+    create_linear_gradient(x0: number, y0: number, x1: number, y1: number, stops: GradientStop[]): any {
+        const gradient = this.ctx.createLinearGradient(x0, y0, x1, y1);
+        for (const stop of stops) {
+            gradient.addColorStop(stop.offset, stop.color);
+        }
+        return gradient;
+    }
+
     draw_text(
         text: string,
         x: number,
         y: number,
         font: string,
         fill_color: string,
-        align: CanvasTextAlign = "left",
-        baseline: CanvasTextBaseline = "alphabetic"
+        align: TextAlign = "left",
+        baseline: TextBaseline = "alphabetic"
     ): void {
         const ctx = this.ctx;
         ctx.font = font;
         ctx.fillStyle = fill_color;
-        ctx.textAlign = align;
-        ctx.textBaseline = baseline;
+        ctx.textAlign = align as CanvasTextAlign;
+        ctx.textBaseline = baseline as CanvasTextBaseline;
         ctx.fillText(text, x, y);
     }
 
@@ -169,7 +170,7 @@ export class CanvasBackend implements IRenderBackend {
         this.ctx.clip();
     }
 
-    stroke_path(color: string, width: number, cap: CanvasLineCap = "butt", join: CanvasLineJoin = "miter"): void {
+    stroke_path(color: string, width: number, cap: LineCap = "butt", join: LineJoin = "miter"): void {
         const ctx = this.ctx;
         ctx.strokeStyle = color;
         ctx.lineWidth = width;
@@ -212,19 +213,112 @@ export class CanvasBackend implements IRenderBackend {
         this.ctx.shadowBlur = blur;
     }
 
-    set_composite_operation(op: GlobalCompositeOperation): void {
+    set_composite_operation(op: CompositeOperation): void {
         this.ctx.globalCompositeOperation = op;
     }
 
-    draw_image(image: CanvasImageSource, x: number, y: number, width?: number, height?: number): void {
+    draw_image(image: RenderImage, x: number, y: number, width?: number, height?: number): void {
         if (width !== undefined && height !== undefined) {
-            this.ctx.drawImage(image, x, y, width, height);
+            this.ctx.drawImage(image.source, x, y, width, height);
         } else {
-            this.ctx.drawImage(image, x, y);
+            this.ctx.drawImage(image.source, x, y);
         }
     }
 
-    draw_image_part(image: CanvasImageSource, sx: number, sy: number, sw: number, sh: number, dx: number, dy: number, dw: number, dh: number): void {
-        this.ctx.drawImage(image, sx, sy, sw, sh, dx, dy, dw, dh);
+    draw_image_part(image: RenderImage, sx: number, sy: number, sw: number, sh: number, dx: number, dy: number, dw: number, dh: number): void;
+    draw_image_part(image: RenderImage, sx: number, sy: number, sw: number, sh: number, dx: number, dy: number, dw: number, dh: number): void {
+        this.ctx.drawImage(image.source, sx, sy, sw, sh, dx, dy, dw, dh);
+    }
+
+    render_slider_to_image(
+        path: [number, number][],
+        radius: number,
+        border_color: string,
+        body_color: string,
+        scale: number,
+        body_opacity: number = 1.0,
+        border_opacity: number = 1.0
+    ): RenderImage | null {
+        let min_x = Infinity,
+            min_y = Infinity,
+            max_x = -Infinity,
+            max_y = -Infinity;
+        for (const p of path) {
+            if (p[0] < min_x) min_x = p[0];
+            if (p[0] > max_x) max_x = p[0];
+            if (p[1] < min_y) min_y = p[1];
+            if (p[1] > max_y) max_y = p[1];
+        }
+
+        const padding = radius + 2;
+        min_x -= padding;
+        min_y -= padding;
+        max_x += padding;
+        max_y += padding;
+
+        const width = Math.ceil((max_x - min_x) * scale);
+        const height = Math.ceil((max_y - min_y) * scale);
+
+        if (width <= 0 || height <= 0) return null;
+
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return null;
+
+        ctx.save();
+        ctx.scale(scale, scale);
+        ctx.translate(-min_x, -min_y);
+
+        const draw_path = () => {
+            ctx.beginPath();
+            if (path.length > 0) {
+                ctx.moveTo(path[0][0], path[0][1]);
+                for (let i = 1; i < path.length; i++) {
+                    ctx.lineTo(path[i][0], path[i][1]);
+                }
+            }
+        };
+
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+
+        // draw full border
+        ctx.globalAlpha = border_opacity;
+        ctx.strokeStyle = border_color;
+        ctx.lineWidth = radius * 2;
+        draw_path();
+        ctx.stroke();
+
+        // if body is semi-transparent, we MUST mask out the center of the border
+        // to prevent it from bleeding through the body
+        const body_radius = radius * 0.872;
+        if (body_opacity < 1.0) {
+            ctx.globalCompositeOperation = "destination-out";
+            ctx.globalAlpha = 1.0;
+            ctx.lineWidth = body_radius * 2;
+            draw_path();
+            ctx.stroke();
+            ctx.globalCompositeOperation = "source-over";
+        }
+
+        // draw body
+        ctx.globalAlpha = body_opacity;
+        ctx.strokeStyle = body_color;
+        ctx.lineWidth = body_radius * 2;
+
+        draw_path();
+
+        ctx.stroke();
+        ctx.restore();
+
+        return {
+            source: canvas,
+            width,
+            height,
+            min_x,
+            min_y
+        };
     }
 }

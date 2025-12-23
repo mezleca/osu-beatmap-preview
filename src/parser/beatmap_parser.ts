@@ -1,4 +1,4 @@
-import type { IBeatmap, IHitObject, ICircleData, ISliderData, ISpinnerData, IHoldData, SliderPathType } from "../types/beatmap";
+import type { IBeatmap, IHitObject, ICircleData, ISliderData, ISpinnerData, IHoldData, SliderPathType, IBeatmapInfo } from "../types/beatmap";
 import { GameMode, HitObjectType } from "../types/beatmap";
 
 export class BeatmapParser {
@@ -21,6 +21,37 @@ export class BeatmapParser {
         }
 
         return this.beatmap;
+    }
+
+    parse_info(content: string, filename: string): IBeatmapInfo {
+        this.beatmap = this.create_empty_beatmap();
+        this.section = "";
+
+        const lines = content.split("\n");
+
+        for (const line of lines) {
+            this.parse_line(line);
+            // stop after difficulty section to save time
+            if (this.section === "Events" || this.section === "TimingPoints" || this.section === "Colours" || this.section === "HitObjects") {
+                break;
+            }
+        }
+
+        if (this.beatmap.ar === -1) {
+            this.beatmap.ar = this.beatmap.od;
+        }
+
+        return {
+            filename,
+            title: this.beatmap.title,
+            artist: this.beatmap.artist,
+            version: this.beatmap.version,
+            mode: this.beatmap.mode,
+            ar: this.beatmap.ar,
+            cs: this.beatmap.cs,
+            od: this.beatmap.od,
+            hp: this.beatmap.hp
+        };
     }
 
     private create_empty_beatmap(): IBeatmap {

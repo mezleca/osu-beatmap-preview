@@ -1,7 +1,8 @@
-import type { IBeatmap } from "./beatmap";
+import type { IBeatmap, IBeatmapInfo } from "./beatmap";
 
 export interface IBeatmapResources {
     beatmap: IBeatmap;
+    available_difficulties: IBeatmapInfo[];
     files: Map<string, ArrayBuffer>;
 
     // extracted media

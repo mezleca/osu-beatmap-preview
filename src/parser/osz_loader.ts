@@ -33,12 +33,18 @@ export class OszLoader {
             throw new Error("No .osu files found in beatmap");
         }
 
+        // list all difficulties
+        const parser = new BeatmapParser();
+        const available_difficulties = osu_files.map((file) => {
+            const content = this.to_string(files.get(file)!);
+            return parser.parse_info(content, file);
+        });
+
         // select difficulty
         const selected_file = this.select_difficulty(osu_files, files, options?.difficulty);
         const osu_content = this.to_string(files.get(selected_file)!);
 
-        // parse beatmap
-        const parser = new BeatmapParser();
+        // parse full beatmap
         const beatmap = parser.parse(osu_content);
 
         // extract resource info
@@ -84,6 +90,7 @@ export class OszLoader {
 
         return {
             beatmap,
+            available_difficulties,
             files: array_buffer_files,
             audio,
             background,

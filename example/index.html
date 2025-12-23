@@ -205,6 +205,7 @@
                         Open
                         <input type="file" id="file-input" accept=".osz,.osu" />
                     </label>
+                    <select class="btn" id="diff-select" style="display: none"></select>
                     <button class="btn" id="play-btn" disabled>▶</button>
                     <button class="btn" id="stop-btn" disabled>⏹</button>
                 </div>
@@ -219,12 +220,8 @@
                 <div class="progress" id="progress">
                     <div class="progress-fill" id="progress-fill"></div>
                 </div>
-                <div class="mods">
-                    <button class="mod" data-mod="hd">HD</button>
-                    <button class="mod" data-mod="hr">HR</button>
-                    <button class="mod" data-mod="ez">EZ</button>
-                    <button class="mod" data-mod="dt">DT</button>
-                    <button class="mod" data-mod="ht">HT</button>
+                <div class="mods" id="mods-container">
+                    <!-- populated dynamically -->
                 </div>
             </div>
         </div>

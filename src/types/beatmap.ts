@@ -33,6 +33,18 @@ export interface IBeatmap {
     hold_count: number;
 }
 
+export interface IBeatmapInfo {
+    filename: string;
+    title: string;
+    artist: string;
+    version: string;
+    mode: GameMode;
+    ar: number;
+    cs: number;
+    od: number;
+    hp: number;
+}
+
 export enum SampleSet {
     Auto = 0,
     Normal = 1,

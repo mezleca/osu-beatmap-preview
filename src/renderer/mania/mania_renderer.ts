@@ -1,18 +1,24 @@
 import type { IBeatmap, IHitObject, IHoldData } from "../../types/beatmap";
 import { is_hold } from "../../types/beatmap";
+import { Mods, has_mod } from "../../types/mods";
 import { get_rate_multiplier } from "../../mods";
 import { BaseRenderer, type IRendererConfig, DEFAULT_RENDERER_CONFIG, PLAYFIELD_WIDTH, PLAYFIELD_HEIGHT } from "../base_renderer";
-import type { IRenderBackend } from "../backend/render_backend";
+import type { IRenderBackend, RenderImage } from "../backend/render_backend";
 import type { ISkinConfig } from "../../skin/skin_config";
 import { get_mania_lane_color } from "../../skin/skin_config";
 
-// lazer scroll time constants (from DrawableManiaRuleset.cs)
+// lazer scroll time constants (DrawableManiaRuleset.cs)
 const MAX_TIME_RANGE = 11485;
 const BASE_SCROLL_SPEED = 20;
 
 export class ManiaRenderer extends BaseRenderer {
     private key_count: number = 4;
     private scroll_time: number = MAX_TIME_RANGE / BASE_SCROLL_SPEED;
+
+    // overlay constants (configurable)
+    private hd_coverage: number = 0.25; // bottom 25% for hidden
+    private fi_coverage: number = 0.6; // top 60% for fade-in
+    private gradient_ratio: number = 0.2; // fade region is 20% of playfield height
 
     constructor(backend: IRenderBackend, skin: ISkinConfig, mods: number = 0, config: IRendererConfig = DEFAULT_RENDERER_CONFIG) {
         super(backend, skin, mods, config);
@@ -38,15 +44,11 @@ export class ManiaRenderer extends BaseRenderer {
 
     private update_scroll_time(): void {
         const rate = get_rate_multiplier(this.mods);
-        // base scroll time adjusted by rate (DT makes notes scroll faster)
         this.scroll_time = MAX_TIME_RANGE / (BASE_SCROLL_SPEED * rate);
     }
 
-    // convert time difference to Y position on screen
     private time_to_y(time_diff: number): number {
         const hit_pos = this.skin.mania_hit_position;
-        // notes scroll from top (y=0) toward hit position (y=hit_pos)
-        // time_diff > 0 means note is in the future, so above hit line
         const progress = time_diff / this.scroll_time;
         return hit_pos - progress * hit_pos;
     }
@@ -81,7 +83,7 @@ export class ManiaRenderer extends BaseRenderer {
         backend.draw_rect(x_offset, 0, total_width, hit_pos, "#000000");
         backend.set_alpha(1);
 
-        // render visible objects (those that haven't ended yet)
+        // draw visible objects (those that haven't ended yet)
         for (const obj of this.objects) {
             if (obj.end_time < time) {
                 continue;
@@ -94,13 +96,51 @@ export class ManiaRenderer extends BaseRenderer {
             }
         }
 
+        // draw cover overlay for hd/fadein
+        if (has_mod(this.mods, Mods.Hidden) || has_mod(this.mods, Mods.FadeIn)) {
+            const coverage_ratio = has_mod(this.mods, Mods.Hidden) ? this.hd_coverage : this.fi_coverage;
+            const total_h = hit_pos * coverage_ratio;
+            const grad_h = hit_pos * this.gradient_ratio;
+
+            if (has_mod(this.mods, Mods.Hidden)) {
+                const start_y = hit_pos - total_h;
+                const fade_end = grad_h / total_h;
+
+                const gradient = backend.create_linear_gradient(x_offset, start_y, x_offset, hit_pos, [
+                    { offset: 0.0, color: "rgba(0,0,0,0)" },
+                    { offset: fade_end * 0.4, color: "rgba(0,0,0,0.3)" },
+                    { offset: fade_end * 0.7, color: "rgba(0,0,0,0.75)" },
+                    { offset: fade_end * 0.9, color: "rgba(0,0,0,0.95)" },
+                    { offset: fade_end, color: "rgba(0,0,0,1)" },
+                    { offset: 1.0, color: "rgba(0,0,0,1)" }
+                ]);
+                backend.draw_rect_gradient(x_offset, start_y, total_width, total_h, gradient);
+            } else {
+                const fade_start = (total_h - grad_h) / total_h;
+                const gradient = backend.create_linear_gradient(x_offset, 0, x_offset, total_h, [
+                    { offset: 0.0, color: "rgba(0,0,0,1)" },
+                    { offset: fade_start, color: "rgba(0,0,0,1)" },
+                    { offset: fade_start + (1 - fade_start) * 0.1, color: "rgba(0,0,0,0.95)" },
+                    { offset: fade_start + (1 - fade_start) * 0.4, color: "rgba(0,0,0,0.75)" },
+                    { offset: fade_start + (1 - fade_start) * 0.7, color: "rgba(0,0,0,0.3)" },
+                    { offset: 1.0, color: "rgba(0,0,0,0)" }
+                ]);
+                backend.draw_rect_gradient(x_offset, 0, total_width, total_h, gradient);
+            }
+        }
         backend.restore();
         backend.restore();
     }
 
     private get_lane(obj: IHitObject): number {
         const pos = (obj.data as { pos: [number, number] }).pos;
-        return Math.floor((pos[0] * this.key_count) / 512);
+        let lane = Math.floor((pos[0] * this.key_count) / 512);
+
+        if (has_mod(this.mods, Mods.Mirror)) {
+            lane = this.key_count - 1 - lane;
+        }
+
+        return lane;
     }
 
     private draw_note(obj: IHitObject, time: number, x_offset: number): void {
@@ -166,6 +206,8 @@ export class ManiaRenderer extends BaseRenderer {
             backend.set_alpha(1.0);
             backend.draw_rect(x + spacing, head_y - note_height, lane_width - 2 * spacing, note_height, color);
         }
+
+        backend.set_alpha(1); // reset after hold note
     }
 
     private draw_judgment_line(x_offset: number): void {
@@ -178,11 +220,9 @@ export class ManiaRenderer extends BaseRenderer {
 
     private draw_lane_keys(time: number, x_offset: number): void {
         const { backend, skin, key_count } = this;
-        const lane_width = skin.mania_lane_width;
-        const hit_pos = skin.mania_hit_position;
-        const key_height = skin.mania_note_height + 5;
+        const { mania_lane_width: lane_width, mania_hit_position: hit_pos, mania_lane_spacing: spacing, mania_note_height: note_height } = skin;
+        const key_height = note_height + 5;
 
-        // detect pressed lanes (autoplay simulation)
         const pressed = new Set<number>();
         const HIT_WINDOW = 50;
 
@@ -192,23 +232,17 @@ export class ManiaRenderer extends BaseRenderer {
             }
         }
 
-        // draw keys at judgment line position
         for (let i = 0; i < key_count; i++) {
             const is_pressed = pressed.has(i);
             const x = x_offset + i * lane_width;
             const color = get_mania_lane_color(skin, key_count, i);
 
-            // keys at bottom of playfield, just below judgment line
-            const key_y = hit_pos;
-
-            // key background
             backend.set_alpha(0.3);
-            backend.draw_rect(x + skin.mania_lane_spacing, key_y, lane_width - 2 * skin.mania_lane_spacing, key_height, color);
+            backend.draw_rect(x + spacing, hit_pos, lane_width - 2 * spacing, key_height, color);
 
-            // key pressed highlight
             if (is_pressed) {
                 backend.set_alpha(1.0);
-                backend.draw_rect(x + skin.mania_lane_spacing, key_y, lane_width - 2 * skin.mania_lane_spacing, key_height, "#ff6666");
+                backend.draw_rect(x + spacing, hit_pos, lane_width - 2 * spacing, key_height, "#ff6666");
             }
         }
 

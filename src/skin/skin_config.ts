@@ -12,10 +12,19 @@ export interface ISkinConfig {
     slider_tick_opacity: number;
     slider_tick_size: number;
 
-    // follow point/circle
+    // follow circle (slider ball outer ring)
     follow_circle_factor: number;
     follow_circle_width: number;
     follow_circle_opacity: number;
+    follow_circle_color: string;
+    follow_circle_use_combo_color: boolean;
+
+    // slider ball (inner circle)
+    slider_ball_color: string;
+    slider_ball_opacity: number;
+    enable_slider_ball: boolean;
+
+    // follow points (dots between objects)
     follow_point_width: number;
 
     // spinner
@@ -33,6 +42,11 @@ export interface ISkinConfig {
     font_family: string;
     hit_animation_duration: number;
     hit_animation_scale: number;
+
+    // animation toggles
+    enable_hit_animations: boolean;
+    enable_follow_circle_animations: boolean;
+    enable_approach_circle: boolean;
 }
 
 const MANIA_KEY_COLORS: Record<number, string[]> = {
@@ -52,17 +66,24 @@ export const DEFAULT_SKIN: ISkinConfig = {
     combo_colors: ["0,185,0", "7, 105, 227", "224, 4, 38", "227, 171, 2"],
 
     circle_border_width: 0.13,
-    hit_circle_opacity: 1.0,
+    hit_circle_opacity: 0.85,
     approach_circle_width: 0.1,
 
-    slider_body_opacity: 0.85,
+    slider_body_opacity: 0.8,
     slider_border_opacity: 1.0,
     slider_tick_opacity: 0.75,
     slider_tick_size: 0.1,
 
-    follow_circle_factor: 2,
-    follow_circle_width: 3,
-    follow_circle_opacity: 0.7,
+    follow_circle_factor: 1.5,
+    follow_circle_width: 4,
+    follow_circle_opacity: 0.8,
+    follow_circle_color: "#ffffffff",
+    follow_circle_use_combo_color: false,
+
+    slider_ball_color: "#ffffff",
+    slider_ball_opacity: 1.0,
+    enable_slider_ball: true,
+
     follow_point_width: 2,
 
     spinner_size: 180,
@@ -76,7 +97,11 @@ export const DEFAULT_SKIN: ISkinConfig = {
 
     font_family: '"Exo 2", sans-serif',
     hit_animation_duration: 300,
-    hit_animation_scale: 1.3
+    hit_animation_scale: 1.3,
+
+    enable_hit_animations: true,
+    enable_follow_circle_animations: true,
+    enable_approach_circle: true
 };
 
 export const merge_skin = (partial?: Partial<ISkinConfig>): ISkinConfig => {

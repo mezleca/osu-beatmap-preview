@@ -14,7 +14,9 @@ export const Mods = {
     Autoplay: 1 << 11,
     SpunOut: 1 << 12,
     Autopilot: 1 << 13,
-    Perfect: 1 << 14
+    Perfect: 1 << 14,
+    FadeIn: 1 << 23,
+    Mirror: 1 << 30
 } as const;
 
 export const SpeedChangingMods = Mods.DoubleTime | Mods.HalfTime | Mods.Nightcore;
@@ -38,7 +40,9 @@ export const mods_from_string = (str: string): number => {
         at: Mods.Autoplay,
         so: Mods.SpunOut,
         ap: Mods.Autopilot,
-        pf: Mods.Perfect
+        pf: Mods.Perfect,
+        fi: Mods.FadeIn,
+        mr: Mods.Mirror
     };
 
     for (let i = 0; i < lower.length - 1; i += 2) {
@@ -64,6 +68,8 @@ export const mods_to_string = (mods: number): string => {
     if (mods & Mods.Nightcore) names.push("NC");
     if (mods & Mods.Flashlight) names.push("FL");
     if (mods & Mods.SpunOut) names.push("SO");
+    if (mods & Mods.FadeIn) names.push("FI");
+    if (mods & Mods.Mirror) names.push("MR");
 
     const idx_dt = names.indexOf("DT");
     const idx_nc = names.indexOf("NC");
@@ -81,7 +87,7 @@ export const get_speed_multiplier = (mods: number): number => {
     return 1.0;
 };
 
-const EXCLUSIVE_MOD_GROUPS = [Mods.HardRock | Mods.Easy, Mods.DoubleTime | Mods.HalfTime | Mods.Nightcore];
+const EXCLUSIVE_MOD_GROUPS = [Mods.HardRock | Mods.Easy, Mods.DoubleTime | Mods.HalfTime | Mods.Nightcore, Mods.Hidden | Mods.FadeIn];
 
 export const toggle_mod = (current: number, mod: number): number => {
     // turn off
@@ -102,3 +108,41 @@ export const toggle_mod = (current: number, mod: number): number => {
 };
 
 export const has_mod = (mods: number, mod: number): boolean => (mods & mod) !== 0;
+
+export type GameModeType = "standard" | "mania" | "taiko" | "catch";
+
+export interface IModInfo {
+    name: string;
+    acronym: string;
+    value: number;
+}
+
+export const get_available_mods = (mode: GameModeType): IModInfo[] => {
+    const common: IModInfo[] = [
+        { name: "No Fail", acronym: "NF", value: Mods.NoFail },
+        { name: "Easy", acronym: "EZ", value: Mods.Easy },
+        { name: "Hidden", acronym: "HD", value: Mods.Hidden },
+        { name: "Double Time", acronym: "DT", value: Mods.DoubleTime },
+        { name: "Half Time", acronym: "HT", value: Mods.HalfTime },
+        { name: "Nightcore", acronym: "NC", value: Mods.Nightcore }
+    ];
+
+    switch (mode) {
+        case "standard":
+            return [
+                ...common,
+                { name: "Hard Rock", acronym: "HR", value: Mods.HardRock },
+                { name: "Flashlight", acronym: "FL", value: Mods.Flashlight }
+            ];
+
+        case "mania":
+            return [...common, { name: "Fade In", acronym: "FI", value: Mods.FadeIn }, { name: "Mirror", acronym: "MR", value: Mods.Mirror }];
+
+        case "taiko":
+        case "catch":
+            return [...common, { name: "Hard Rock", acronym: "HR", value: Mods.HardRock }];
+
+        default:
+            return common;
+    }
+};

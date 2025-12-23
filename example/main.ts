@@ -1,4 +1,4 @@
-import { BeatmapPlayer, Mods, mods_from_string, toggle_mod, has_mod, type IBeatmap, type IBeatmapResources } from "../src";
+import { BeatmapPlayer, Mods, mods_from_string, toggle_mod, has_mod, get_available_mods, type IBeatmap, type IBeatmapResources } from "../src";
 
 const $ = (id: string) => document.getElementById(id)!;
 
@@ -12,6 +12,7 @@ const title_el = $("title") as HTMLSpanElement;
 const subtitle_el = $("subtitle") as HTMLSpanElement;
 const time_el = $("time") as HTMLSpanElement;
 const drop_zone = $("drop-zone") as HTMLDivElement;
+const diff_select = $("diff-select") as HTMLSelectElement;
 
 // player instance
 let player: BeatmapPlayer | null = null;
@@ -33,12 +34,27 @@ const resize_canvas = () => {
 const resize_observer = new ResizeObserver(() => resize_canvas());
 resize_observer.observe(drop_zone);
 
-const setup_player_events = (p: BeatmapPlayer) => {
+let setup_player_events = (p: BeatmapPlayer) => {
     p.on("loaded", (beatmap: IBeatmap, resources: IBeatmapResources) => {
         title_el.textContent = `${beatmap.artist} - ${beatmap.title}`;
         subtitle_el.textContent = `[${beatmap.version}] AR${beatmap.ar.toFixed(1)} CS${beatmap.cs.toFixed(1)}`;
         play_btn.disabled = false;
         stop_btn.disabled = false;
+
+        // populate difficulty selector
+        if (resources.available_difficulties.length > 1) {
+            diff_select.style.display = "block";
+            diff_select.innerHTML = "";
+            for (const diff of resources.available_difficulties) {
+                const opt = document.createElement("option");
+                opt.value = diff.version;
+                opt.textContent = diff.version;
+                opt.selected = diff.version === beatmap.version;
+                diff_select.appendChild(opt);
+            }
+        } else {
+            diff_select.style.display = "none";
+        }
     });
 
     p.on("timeupdate", (time, duration) => {
@@ -87,14 +103,6 @@ const load_beatmap = async (data: ArrayBuffer, filename: string) => {
     }
 };
 
-const update_mod_ui = () => {
-    document.querySelectorAll(".mod").forEach((btn) => {
-        const mod_name = (btn as HTMLElement).dataset.mod!;
-        const mod_value = mods_from_string(mod_name);
-        btn.classList.toggle("active", has_mod(active_mods, mod_value));
-    });
-};
-
 // file input
 file_input.addEventListener("change", async (e) => {
     const file = (e.target as HTMLInputElement).files?.[0];
@@ -138,17 +146,47 @@ progress_bar.addEventListener("click", (e) => {
     player.seek(pct * player.duration);
 });
 
-// mod toggles
-document.querySelectorAll(".mod").forEach((btn) => {
-    btn.addEventListener("click", () => {
-        const mod_name = (btn as HTMLElement).dataset.mod!;
-        const mod_value = mods_from_string(mod_name);
-
-        active_mods = toggle_mod(active_mods, mod_value);
-        update_mod_ui();
-
-        if (player?.is_loaded) {
-            player.set_mods(active_mods);
-        }
-    });
+diff_select.addEventListener("change", async () => {
+    if (player && diff_select.value) {
+        title_el.textContent = "Loading Difficulty...";
+        await player.set_difficulty(diff_select.value);
+    }
 });
+
+// mod toggles
+const mods_container = $("mods-container") as HTMLDivElement;
+
+const render_mod_buttons = () => {
+    // default to standard if no player or beatmap loaded yet
+    const mode = player?.mode || "standard";
+    const available = get_available_mods(mode as any);
+
+    mods_container.innerHTML = "";
+    for (const mod of available) {
+        const btn = document.createElement("button");
+        btn.className = `mod ${has_mod(active_mods, mod.value) ? "active" : ""}`;
+        btn.textContent = mod.acronym;
+        btn.title = mod.name;
+        btn.onclick = () => {
+            active_mods = toggle_mod(active_mods, mod.value);
+            if (player?.is_loaded) {
+                player.set_mods(active_mods);
+            }
+            render_mod_buttons();
+        };
+        mods_container.appendChild(btn);
+    }
+};
+
+render_mod_buttons();
+
+// update buttons when player state changes (like mode change)
+const original_setup = setup_player_events;
+
+setup_player_events = (p: BeatmapPlayer) => {
+    original_setup(p);
+    p.on("loaded", () => {
+        // give it a tick to ensure internal renderer is swapped if mode changed
+        setTimeout(render_mod_buttons, 0);
+    });
+};

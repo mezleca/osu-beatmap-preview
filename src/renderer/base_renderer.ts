@@ -1,4 +1,4 @@
-import type { IRenderBackend } from "./backend/render_backend";
+import type { IRenderBackend, RenderImage } from "./backend/render_backend";
 import type { IBeatmap, IHitObject } from "../types/beatmap";
 import type { ISkinConfig } from "../skin/skin_config";
 
@@ -6,7 +6,7 @@ import type { ISkinConfig } from "../skin/skin_config";
 export const PLAYFIELD_WIDTH = 512;
 export const PLAYFIELD_HEIGHT = 384;
 
-// grid levels (like in osu! editor)
+// grid levels (osu! editor)
 export enum GridLevel {
     None = 0,
     Large = 32,
@@ -61,7 +61,7 @@ export abstract class BaseRenderer {
 
     protected beatmap!: IBeatmap;
     protected objects: IHitObject[] = [];
-    protected background_image: CanvasImageSource | null = null;
+    protected background_image: RenderImage | null = null;
 
     constructor(backend: IRenderBackend, skin: ISkinConfig, mods: number = 0, config: IRendererConfig = DEFAULT_RENDERER_CONFIG) {
         this.backend = backend;
@@ -70,7 +70,7 @@ export abstract class BaseRenderer {
         this.config = { ...DEFAULT_RENDERER_CONFIG, ...config };
     }
 
-    set_background(image: CanvasImageSource | null): void {
+    set_background(image: RenderImage | null): void {
         this.background_image = image;
     }
 
@@ -151,11 +151,9 @@ export abstract class BaseRenderer {
 
         const canvas_w = backend.width;
         const canvas_h = backend.height;
-        const img_w = (this.background_image as any).width || 0;
-        const img_h = (this.background_image as any).height || 0;
+        const { width: img_w, height: img_h } = this.background_image;
 
         if (img_w > 0 && img_h > 0) {
-            // "cover" scaling logic:
             // maintain aspect ratio but fill the entire area
             const scale = Math.max(canvas_w / img_w, canvas_h / img_h);
             const draw_w = img_w * scale;
@@ -165,7 +163,6 @@ export abstract class BaseRenderer {
 
             backend.draw_image(this.background_image, x, y, draw_w, draw_h);
         } else {
-            // fallback to stretch if dimensions unknown
             backend.draw_image(this.background_image, 0, 0, canvas_w, canvas_h);
         }
 
