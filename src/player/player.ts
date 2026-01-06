@@ -46,7 +46,6 @@ export interface IPlayerOptions {
     renderer_config?: Partial<IRendererConfig>;
     playfield_scale?: number; // 0.0 to 1.0 (replaces fill_canvas)
     auto_resize?: boolean; // managed internally via ResizeObserver
-    key_bindings?: IKeyBindings;
 }
 
 export class BeatmapPlayer {
@@ -108,10 +107,6 @@ export class BeatmapPlayer {
 
         if (options.auto_resize) {
             this.setup_auto_resize();
-        }
-
-        if (options.key_bindings) {
-            this.setup_key_bindings(options.key_bindings);
         }
     }
 
@@ -527,32 +522,6 @@ export class BeatmapPlayer {
             }
         });
         this.resize_observer.observe(this.options.canvas.parentElement || this.options.canvas);
-    }
-
-    private setup_key_bindings(bindings: IKeyBindings): void {
-        this.key_handler = (e: KeyboardEvent) => {
-            const keys = {
-                toggle_pause: bindings.toggle_pause ?? "Space",
-                seek_forward: bindings.seek_forward ?? "ArrowRight",
-                seek_backward: bindings.seek_backward ?? "ArrowLeft",
-                toggle_grid: bindings.toggle_grid ?? "g"
-            };
-
-            if (e.code === keys.toggle_pause) {
-                e.preventDefault();
-                this.toggle_pause();
-            } else if (e.code === keys.seek_forward) {
-                e.preventDefault();
-                this.seek(this.current_time + 5000);
-            } else if (e.code === keys.seek_backward) {
-                e.preventDefault();
-                this.seek(this.current_time - 5000);
-            } else if (e.code === keys.toggle_grid) {
-                this.toggle_grid();
-            }
-        };
-
-        window.addEventListener("keydown", this.key_handler);
     }
 
     toggle_pause(): void {

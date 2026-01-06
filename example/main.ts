@@ -85,8 +85,7 @@ const load_beatmap = async (data: ArrayBuffer, filename: string) => {
         mods: active_mods,
         volume: 0.5,
         playfield_scale: 0.9,
-        auto_resize: true,
-        key_bindings: {}
+        auto_resize: true
     });
 
     setup_player_events(player);
