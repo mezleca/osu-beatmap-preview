@@ -79,6 +79,7 @@ export interface IRenderBackend {
     clip(): void;
     stroke_path(color: string, width: number, cap?: LineCap, join?: LineJoin): void;
     fill_path(color: string): void;
+    close_path(): void;
     save(): void;
     restore(): void;
     translate(x: number, y: number): void;
@@ -87,6 +88,7 @@ export interface IRenderBackend {
     set_alpha(alpha: number): void;
     set_shadow(color: string, blur: number): void;
     set_composite_operation(op: CompositeOperation): void;
+    set_blend_mode(mode: "normal" | "lighter" | "multiply" | "screen"): void;
     draw_image(image: RenderImage, x: number, y: number, width?: number, height?: number): void;
     draw_image_part(image: RenderImage, sx: number, sy: number, sw: number, sh: number, dx: number, dy: number, dw: number, dh: number): void;
     render_slider_to_image(

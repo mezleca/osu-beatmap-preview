@@ -85,7 +85,8 @@ const load_beatmap = async (data: ArrayBuffer, filename: string) => {
         mods: active_mods,
         volume: 0.5,
         playfield_scale: 0.9,
-        auto_resize: true
+        auto_resize: true,
+        enable_fps_counter: true
     });
 
     setup_player_events(player);
@@ -189,3 +190,34 @@ setup_player_events = (p: BeatmapPlayer) => {
         setTimeout(render_mod_buttons, 0);
     });
 };
+
+// keyboard controls
+document.addEventListener("keydown", (e) => {
+    if (!player) return;
+
+    switch (e.code) {
+        case "Space":
+            e.preventDefault();
+            player.toggle_pause();
+            break;
+        case "ArrowLeft":
+            e.preventDefault();
+            player.seek(Math.max(0, player.current_time - 5000));
+            break;
+        case "ArrowRight":
+            e.preventDefault();
+            player.seek(Math.min(player.duration, player.current_time + 5000));
+            break;
+        case "KeyG":
+            player.toggle_grid();
+            break;
+        case "ArrowUp":
+            e.preventDefault();
+            player.seek(Math.max(0, player.current_time - 1000));
+            break;
+        case "ArrowDown":
+            e.preventDefault();
+            player.seek(Math.min(player.duration, player.current_time + 1000));
+            break;
+    }
+});

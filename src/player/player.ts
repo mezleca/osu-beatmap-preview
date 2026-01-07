@@ -4,7 +4,7 @@ import type { IBeatmapResources } from "../types/resources";
 import { type Result, ErrorCode, ok, err } from "../types/result";
 import { get_speed_multiplier } from "../types/mods";
 import { OszLoader } from "../parser/osz_loader";
-import { BeatmapParser, extract_preview_time } from "../parser/beatmap_parser";
+import { get_shared_parser } from "../parser/async_parser";
 import { BaseRenderer, DEFAULT_RENDERER_CONFIG, type IRendererConfig } from "../renderer/base_renderer";
 import type { IRenderBackend } from "../renderer/backend/render_backend";
 import { CanvasBackend } from "../renderer/backend/canvas_backend";
@@ -28,13 +28,6 @@ type PlayerEventMap = {
 
 type PlayerEvent = keyof PlayerEventMap;
 
-export interface IKeyBindings {
-    toggle_pause?: string; // default: Space
-    seek_forward?: string; // default: ArrowRight
-    seek_backward?: string; // default: ArrowLeft
-    toggle_grid?: string; // default: g
-}
-
 export interface IPlayerOptions {
     canvas: HTMLCanvasElement;
     skin?: Partial<ISkinConfig>;
@@ -44,8 +37,9 @@ export interface IPlayerOptions {
     volume?: number;
     backend?: IRenderBackend;
     renderer_config?: Partial<IRendererConfig>;
-    playfield_scale?: number; // 0.0 to 1.0 (replaces fill_canvas)
-    auto_resize?: boolean; // managed internally via ResizeObserver
+    playfield_scale?: number;
+    auto_resize?: boolean;
+    enable_fps_counter?: boolean;
 }
 
 export class BeatmapPlayer {
@@ -77,6 +71,12 @@ export class BeatmapPlayer {
     private key_handler: ((e: KeyboardEvent) => void) | null = null;
     private options: IPlayerOptions;
 
+    // fps tracking
+    private enable_fps_counter = false;
+    private fps_frame_count = 0;
+    private fps_last_update = 0;
+    private current_fps = 0;
+
     constructor(options: IPlayerOptions) {
         this.options = options;
         this.backend = options.backend ?? new CanvasBackend();
@@ -95,8 +95,8 @@ export class BeatmapPlayer {
 
         // initialize audio system
         // @ts-ignore
-        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-        this.audio_context = new AudioContextClass();
+        const audio_context_class = window.AudioContext || window.webkitAudioContext;
+        this.audio_context = new audio_context_class();
 
         this.audio = new AudioController(this.audio_context);
         this.hitsounds = new HitsoundController(this.audio_context);
@@ -108,6 +108,9 @@ export class BeatmapPlayer {
         if (options.auto_resize) {
             this.setup_auto_resize();
         }
+
+        this.enable_fps_counter = options.enable_fps_counter ?? false;
+        this.fps_last_update = performance.now();
     }
 
     // load from .osz ArrayBuffer
@@ -175,8 +178,8 @@ export class BeatmapPlayer {
 
     async load_osu_content(content: string, audio?: ArrayBuffer): Promise<Result<IBeatmapResources>> {
         try {
-            const parser = new BeatmapParser();
-            const beatmap = parser.parse(content);
+            const parser = get_shared_parser();
+            const beatmap = await parser.parse(content);
             this._raw_osu_content = content;
             return this.load_beatmap(beatmap, audio);
         } catch (e) {
@@ -223,7 +226,8 @@ export class BeatmapPlayer {
 
         // determine start time from preview point
         if (this.start_offset < 0 && this._raw_osu_content) {
-            const preview = extract_preview_time(this._raw_osu_content);
+            const parser = get_shared_parser();
+            const preview = await parser.extract_preview_time(this._raw_osu_content);
             this.start_offset = preview > 0 ? preview : this.get_last_object_time() * 0.42;
         }
         if (this.start_offset < 0) {
@@ -589,16 +593,41 @@ export class BeatmapPlayer {
         }
     }
 
+    private last_timestamp: number = 0;
+    private smooth_time: number = 0;
+
     private start_render_loop(): void {
         if (this.animation_frame !== null) return;
 
-        const loop = () => {
+        this.last_timestamp = performance.now();
+        this.smooth_time = this.audio.current_time;
+
+        const loop = (timestamp: number) => {
             if (!this.audio.is_playing) {
                 this.animation_frame = null;
                 return;
             }
 
-            const time = this.audio.current_time;
+            // calculate smooth time
+            const delta = timestamp - this.last_timestamp;
+            this.last_timestamp = timestamp;
+
+            // advance smooth time by delta * speed
+            this.smooth_time += delta * this.audio.speed_multiplier;
+
+            // resync with audio clock if deviation is too large (> 30ms)
+            // or periodically to prevent drift
+            const actual_audio_time = this.audio.current_time;
+            const deviation = Math.abs(this.smooth_time - actual_audio_time);
+
+            if (deviation > 30) {
+                this.smooth_time = actual_audio_time;
+            } else {
+                // slowly nudge smooth_time towards actual_audio_time to prevent drift
+                this.smooth_time += (actual_audio_time - this.smooth_time) * 0.1;
+            }
+
+            const time = this.smooth_time;
 
             // process hitsounds
             this.schedule_hitsounds();
@@ -700,5 +729,24 @@ export class BeatmapPlayer {
     private render_frame(time: number): void {
         this.backend.clear();
         this.renderer?.render(time);
+
+        // fps tracking
+        if (this.enable_fps_counter) {
+            this.fps_frame_count++;
+            const now = performance.now();
+            const delta = now - this.fps_last_update;
+
+            if (delta >= 1000) {
+                this.current_fps = Math.round((this.fps_frame_count * 1000) / delta);
+                this.fps_frame_count = 0;
+                this.fps_last_update = now;
+            }
+
+            this.backend.draw_text(`${this.current_fps} FPS`, 10, 20, "14px monospace", "rgba(255,255,255,0.8)", "left", "top");
+        }
+    }
+
+    set_fps_counter(enabled: boolean): void {
+        this.enable_fps_counter = enabled;
     }
 }

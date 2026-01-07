@@ -1,7 +1,7 @@
 import JSZip from "jszip";
 import type { IBeatmap } from "../types/beatmap";
 import type { IBeatmapResources } from "../types/resources";
-import { BeatmapParser, extract_audio_filename, extract_background_filename, extract_video_info } from "./beatmap_parser";
+import { AsyncBeatmapParser } from "./async_parser";
 
 export interface IOszLoaderOptions {
     // select difficulty by index or version name
@@ -9,6 +9,8 @@ export interface IOszLoaderOptions {
 }
 
 export class OszLoader {
+    private parser = new AsyncBeatmapParser();
+
     // load from .osz archive (ArrayBuffer)
     async load_osz(data: ArrayBuffer, options?: IOszLoaderOptions): Promise<IBeatmapResources> {
         const zip = await JSZip.loadAsync(data);
@@ -33,24 +35,27 @@ export class OszLoader {
             throw new Error("No .osu files found in beatmap");
         }
 
-        // list all difficulties
-        const parser = new BeatmapParser();
-        const available_difficulties = osu_files.map((file) => {
-            const content = this.to_string(files.get(file)!);
-            return parser.parse_info(content, file);
-        });
+        // list all difficulties (async via worker)
+        const available_difficulties = await Promise.all(
+            osu_files.map(async (file) => {
+                const content = this.to_string(files.get(file)!);
+                return this.parser.parse_info(content, file);
+            })
+        );
 
         // select difficulty
         const selected_file = this.select_difficulty(osu_files, files, options?.difficulty);
         const osu_content = this.to_string(files.get(selected_file)!);
 
-        // parse full beatmap
-        const beatmap = parser.parse(osu_content);
+        // parse full beatmap (async via worker)
+        const beatmap = await this.parser.parse(osu_content);
 
-        // extract resource info
-        const audio_filename = extract_audio_filename(osu_content);
-        const background_filename = extract_background_filename(osu_content);
-        const video_info = extract_video_info(osu_content);
+        // extract resource info (async via worker)
+        const [audio_filename, background_filename, video_info] = await Promise.all([
+            this.parser.extract_audio_filename(osu_content),
+            this.parser.extract_background_filename(osu_content),
+            this.parser.extract_video_info(osu_content)
+        ]);
 
         // convert files map to ArrayBuffer only
         const array_buffer_files = new Map<string, ArrayBuffer>();

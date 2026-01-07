@@ -28,6 +28,9 @@ export class AudioController {
     get duration(): number {
         return this._duration;
     }
+    get speed_multiplier(): number {
+        return this.speed;
+    }
 
     get current_time(): number {
         if (!this._is_playing) {

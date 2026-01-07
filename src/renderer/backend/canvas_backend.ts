@@ -184,6 +184,10 @@ export class CanvasBackend implements IRenderBackend {
         this.ctx.fill();
     }
 
+    close_path(): void {
+        this.ctx.closePath();
+    }
+
     save(): void {
         this.ctx.save();
     }
@@ -215,6 +219,16 @@ export class CanvasBackend implements IRenderBackend {
 
     set_composite_operation(op: CompositeOperation): void {
         this.ctx.globalCompositeOperation = op;
+    }
+
+    set_blend_mode(mode: "normal" | "lighter" | "multiply" | "screen"): void {
+        const ops: Record<string, GlobalCompositeOperation> = {
+            normal: "source-over",
+            lighter: "lighter",
+            multiply: "multiply",
+            screen: "screen"
+        };
+        this.ctx.globalCompositeOperation = ops[mode] ?? "source-over";
     }
 
     draw_image(image: RenderImage, x: number, y: number, width?: number, height?: number): void {

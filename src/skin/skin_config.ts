@@ -4,13 +4,30 @@ export interface ISkinConfig {
     // circle rendering
     circle_border_width: number;
     hit_circle_opacity: number;
+
+    // approach circle
+    enable_approach_circle: boolean;
     approach_circle_width: number;
+    approach_circle_opacity: number;
+    approach_circle_use_combo_color: boolean;
+    approach_circle_color?: string;
+
+    // hit glow effect
+    enable_glow: boolean;
+    glow_color?: string;
+    glow_use_combo_color: boolean;
+    glow_opacity: number;
+
+    // hit explode/flash effect (after hit)
+    enable_hit_explode: boolean;
 
     // slider rendering
     slider_body_opacity: number;
     slider_border_opacity: number;
     slider_tick_opacity: number;
     slider_tick_size: number;
+    slider_border_color?: string;
+    slider_track_override?: string;
 
     // follow circle (slider ball outer ring)
     follow_circle_factor: number;
@@ -46,7 +63,6 @@ export interface ISkinConfig {
     // animation toggles
     enable_hit_animations: boolean;
     enable_follow_circle_animations: boolean;
-    enable_approach_circle: boolean;
 }
 
 const MANIA_KEY_COLORS: Record<number, string[]> = {
@@ -65,19 +81,29 @@ const MANIA_KEY_COLORS: Record<number, string[]> = {
 export const DEFAULT_SKIN: ISkinConfig = {
     combo_colors: ["0,185,0", "7, 105, 227", "224, 4, 38", "227, 171, 2"],
 
-    circle_border_width: 0.13,
-    hit_circle_opacity: 0.85,
-    approach_circle_width: 0.1,
+    circle_border_width: 0.12,
+    hit_circle_opacity: 0.95,
 
-    slider_body_opacity: 0.8,
+    enable_approach_circle: true,
+    approach_circle_width: 0.1,
+    approach_circle_opacity: 0.5,
+    approach_circle_use_combo_color: true,
+
+    enable_glow: false,
+    glow_use_combo_color: true,
+    glow_opacity: 0.3,
+
+    enable_hit_explode: true,
+
+    slider_body_opacity: 0.9,
     slider_border_opacity: 1.0,
     slider_tick_opacity: 0.75,
     slider_tick_size: 0.1,
 
     follow_circle_factor: 1.5,
     follow_circle_width: 4,
-    follow_circle_opacity: 0.8,
-    follow_circle_color: "#ffffffff",
+    follow_circle_opacity: 0.5,
+    follow_circle_color: "#d3d3d3ff",
     follow_circle_use_combo_color: false,
 
     slider_ball_color: "#ffffff",
@@ -100,8 +126,7 @@ export const DEFAULT_SKIN: ISkinConfig = {
     hit_animation_scale: 1.3,
 
     enable_hit_animations: true,
-    enable_follow_circle_animations: true,
-    enable_approach_circle: true
+    enable_follow_circle_animations: true
 };
 
 export const merge_skin = (partial?: Partial<ISkinConfig>): ISkinConfig => {

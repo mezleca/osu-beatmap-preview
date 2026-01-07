@@ -3,11 +3,10 @@ import { is_hold } from "../../types/beatmap";
 import { Mods, has_mod } from "../../types/mods";
 import { get_rate_multiplier } from "../../mods";
 import { BaseRenderer, type IRendererConfig, DEFAULT_RENDERER_CONFIG, PLAYFIELD_WIDTH, PLAYFIELD_HEIGHT } from "../base_renderer";
-import type { IRenderBackend, RenderImage } from "../backend/render_backend";
+import type { IRenderBackend } from "../backend/render_backend";
 import type { ISkinConfig } from "../../skin/skin_config";
 import { get_mania_lane_color } from "../../skin/skin_config";
 
-// lazer scroll time constants (DrawableManiaRuleset.cs)
 const MAX_TIME_RANGE = 11485;
 const BASE_SCROLL_SPEED = 20;
 
