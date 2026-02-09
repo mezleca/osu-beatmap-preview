@@ -119,7 +119,6 @@ export interface IModInfo {
 
 export const get_available_mods = (mode: GameModeType): IModInfo[] => {
     const common: IModInfo[] = [
-        { name: "No Fail", acronym: "NF", value: Mods.NoFail },
         { name: "Easy", acronym: "EZ", value: Mods.Easy },
         { name: "Hidden", acronym: "HD", value: Mods.Hidden },
         { name: "Double Time", acronym: "DT", value: Mods.DoubleTime },
@@ -129,14 +128,10 @@ export const get_available_mods = (mode: GameModeType): IModInfo[] => {
 
     switch (mode) {
         case "standard":
-            return [
-                ...common,
-                { name: "Hard Rock", acronym: "HR", value: Mods.HardRock },
-                { name: "Flashlight", acronym: "FL", value: Mods.Flashlight }
-            ];
+            return [...common, { name: "Hard Rock", acronym: "HR", value: Mods.HardRock }];
 
         case "mania":
-            return [...common, { name: "Fade In", acronym: "FI", value: Mods.FadeIn }, { name: "Mirror", acronym: "MR", value: Mods.Mirror }];
+            return [...common, { name: "Hard Rock", acronym: "HR", value: Mods.HardRock }, { name: "Fade In", acronym: "FI", value: Mods.FadeIn }];
 
         case "taiko":
         case "catch":

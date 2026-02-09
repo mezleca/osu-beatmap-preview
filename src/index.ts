@@ -9,7 +9,10 @@ export {
     extract_preview_time,
     extract_audio_filename,
     extract_background_filename,
-    extract_video_info
+    extract_video_info,
+    configure_wasm_parser,
+    init_wasm_parser,
+    get_wasm_ready
 } from "./parser/beatmap_parser";
 export { OszLoader, type IOszLoaderOptions } from "./parser/osz_loader";
 
@@ -31,6 +34,9 @@ export { CanvasBackend } from "./renderer/backend/canvas_backend";
 export { BaseRenderer, type IRendererConfig, DEFAULT_RENDERER_CONFIG, GridLevel, PLAYFIELD_WIDTH, PLAYFIELD_HEIGHT } from "./renderer/base_renderer";
 export { StandardRenderer } from "./renderer/standard/standard_renderer";
 export { ManiaRenderer } from "./renderer/mania/mania_renderer";
+
+// fonts
+export { load_default_fonts, wait_for_fonts_ready } from "./fonts";
 
 // math
 export {

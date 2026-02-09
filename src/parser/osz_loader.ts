@@ -38,23 +38,25 @@ export class OszLoader {
         // list all difficulties (async via worker)
         const available_difficulties = await Promise.all(
             osu_files.map(async (file) => {
-                const content = this.to_string(files.get(file)!);
-                return this.parser.parse_info(content, file);
+                const content = files.get(file)!;
+                const data = this.to_bytes(content);
+                return this.parser.parse_info(data, file);
             })
         );
 
         // select difficulty
         const selected_file = this.select_difficulty(osu_files, files, options?.difficulty);
-        const osu_content = this.to_string(files.get(selected_file)!);
+        const osu_content = files.get(selected_file)!;
+        const osu_bytes = this.to_bytes(osu_content);
 
         // parse full beatmap (async via worker)
-        const beatmap = await this.parser.parse(osu_content);
+        const beatmap = await this.parser.parse(osu_bytes);
 
         // extract resource info (async via worker)
         const [audio_filename, background_filename, video_info] = await Promise.all([
-            this.parser.extract_audio_filename(osu_content),
-            this.parser.extract_background_filename(osu_content),
-            this.parser.extract_video_info(osu_content)
+            this.parser.extract_audio_filename(osu_bytes),
+            this.parser.extract_background_filename(osu_bytes),
+            this.parser.extract_video_info(osu_bytes)
         ]);
 
         // convert files map to ArrayBuffer only
@@ -182,5 +184,10 @@ export class OszLoader {
     private to_string(data: ArrayBuffer | string): string {
         if (typeof data === "string") return data;
         return new TextDecoder().decode(data);
+    }
+
+    private to_bytes(data: ArrayBuffer | string): Uint8Array {
+        if (data instanceof ArrayBuffer) return new Uint8Array(data);
+        return new TextEncoder().encode(data);
     }
 }

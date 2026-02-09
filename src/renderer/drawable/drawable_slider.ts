@@ -1,126 +1,147 @@
 import type { IHitObject, ISliderData } from "../../types/beatmap";
 import type { RenderImage } from "../backend/render_backend";
 import { Drawable, type DrawableConfig } from "./drawable";
+import { CircleVisual } from "./circle_visual";
 import { Easing } from "./transforms";
 import { get_combo_color } from "../../skin/skin_config";
 import { clamp, vec2_len, vec2_sub, vec2_lerp, type Vec2 } from "../../math/vector2";
 import { Mods, has_mod } from "../../types/mods";
+import { generate_slider_events, type SliderRepeatEvent, type SliderTickEvent } from "../standard/slider_events";
 
 const FADE_OUT_DURATION = 240;
-const HEAD_ANIM_DURATION = 150;
 const ARROW_SCALE_AMOUNT = 1.3;
 const ARROW_MOVE_OUT_DURATION = 35;
 const ARROW_MOVE_IN_DURATION = 250;
 const ARROW_TOTAL_CYCLE = 300;
 
-interface SliderTick {
-    pos: Vec2;
-    time: number;
-    span_index: number;
-    path_progress: number;
-}
-
-interface SliderRepeat {
-    pos: Vec2;
-    time: number;
-    repeat_index: number;
-    path_progress: number;
-}
-
 export class DrawableSlider extends Drawable {
     private slider_data: ISliderData;
-    private path: Vec2[];
+    private position_path: Vec2[];
+    private render_path: Vec2[];
     private path_length: number;
     private span_duration: number;
 
     private body_alpha = 0;
-    private head_alpha = 0;
-    private head_scale = 1;
+    private head_visual = new CircleVisual();
     private ball_alpha = 0;
     private ball_position: Vec2;
     private follow_alpha = 0;
     private follow_scale = 1;
 
-    private ticks: SliderTick[] = [];
-    private repeats: SliderRepeat[] = [];
+    private ticks: SliderTickEvent[] = [];
+    private repeats: SliderRepeatEvent[] = [];
     private tick_distance: number;
+    private min_distance_from_end: number;
     private cached_texture: RenderImage | null = null;
+    private cached_scale: number = 1;
 
-    constructor(hit_object: IHitObject, config: DrawableConfig, path: Vec2[], span_duration: number, tick_distance: number) {
+    constructor(
+        hit_object: IHitObject,
+        config: DrawableConfig,
+        path: Vec2[],
+        span_duration: number,
+        tick_distance: number,
+        min_distance_from_end: number
+    ) {
         super(hit_object, config);
         this.slider_data = hit_object.data as ISliderData;
-        this.path = path;
+        const resample_step = Math.max(1, config.radius * 0.05);
+        this.position_path = path;
+        this.render_path = this.resample_path(path, resample_step);
         this.span_duration = span_duration;
         this.tick_distance = tick_distance;
-        this.path_length = this.calculate_path_length();
+        this.min_distance_from_end = min_distance_from_end;
+        const calculated_length = this.calculate_path_length();
+        this.path_length = this.slider_data.distance > 0 ? this.slider_data.distance : calculated_length;
         this.ball_position = this.slider_data.pos;
 
-        this.generate_nested_objects();
+        this.build_nested_objects();
 
         this.life_time_end = hit_object.end_time + FADE_OUT_DURATION;
     }
 
-    private generate_nested_objects(): void {
-        this.ticks = [];
-        this.repeats = [];
+    private build_nested_objects(): void {
+        const { slider_data, path_length, span_duration, hit_object } = this;
+        const span_count = Math.max(1, slider_data.repetitions);
+        const max_length = 100000;
+        const length = Math.min(max_length, slider_data.distance > 0 ? slider_data.distance : path_length);
+        const tick_distance = clamp(this.tick_distance, 0, length);
 
-        const { slider_data, path_length, span_duration, hit_object, tick_distance } = this;
-        const span_count = slider_data.repetitions;
-
-        if (tick_distance <= 0 || path_length <= 0) return;
-
-        const velocity = path_length / span_duration;
-        const min_distance_from_end = velocity * 10;
-
-        // generate repeats
-        for (let span = 0; span < span_count - 1; span++) {
-            const repeat_time = hit_object.time + (span + 1) * span_duration;
-            const path_progress = (span + 1) % 2; // 0 or 1 alternating
-
-            this.repeats.push({
-                pos: this.get_position_at_progress(path_progress),
-                time: repeat_time,
-                repeat_index: span,
-                path_progress
-            });
+        if (length <= 0 || span_duration <= 0) {
+            this.ticks = [];
+            this.repeats = [];
+            return;
         }
 
-        // generate ticks for each span
-        for (let span = 0; span < span_count; span++) {
-            const span_start_time = hit_object.time + span * span_duration;
-            const reversed = span % 2 === 1;
+        const result = generate_slider_events({
+            start_time: hit_object.time,
+            span_duration,
+            span_count,
+            length,
+            tick_distance,
+            min_distance_from_end: this.min_distance_from_end,
+            get_position_at_progress: (progress) => this.get_position_at_progress(progress)
+        });
 
-            for (let d = tick_distance; d < path_length; d += tick_distance) {
-                if (d >= path_length - min_distance_from_end) break;
+        this.ticks = result.ticks;
+        this.repeats = result.repeats;
+    }
+    private calculate_path_length(): number {
+        let length = 0;
+        for (let i = 1; i < this.position_path.length; i++) {
+            length += vec2_len(vec2_sub(this.position_path[i], this.position_path[i - 1]));
+        }
+        return length;
+    }
 
-                const path_progress = d / path_length;
-                const time_progress = reversed ? 1 - path_progress : path_progress;
+    private resample_path(path: Vec2[], step: number): Vec2[] {
+        if (path.length < 2) return path.slice();
 
-                this.ticks.push({
-                    pos: this.get_position_at_progress(path_progress),
-                    time: span_start_time + time_progress * span_duration,
-                    span_index: span,
-                    path_progress
-                });
+        const result: Vec2[] = [path[0]];
+        let total_length = 0;
+        const seg_lengths: number[] = [];
+
+        for (let i = 1; i < path.length; i++) {
+            const len = vec2_len(vec2_sub(path[i], path[i - 1]));
+            seg_lengths.push(len);
+            total_length += len;
+        }
+
+        if (total_length <= 0) return result;
+
+        let target = step;
+        let acc = 0;
+        let seg_index = 0;
+
+        while (target < total_length && seg_index < seg_lengths.length) {
+            const seg_len = seg_lengths[seg_index];
+            const a = path[seg_index];
+            const b = path[seg_index + 1];
+
+            if (seg_len > 0 && acc + seg_len >= target) {
+                const t = (target - acc) / seg_len;
+                result.push(vec2_lerp(a, b, t));
+                target += step;
+            } else {
+                acc += seg_len;
+                seg_index++;
             }
         }
 
-        // sort ticks by time for correct rendering
-        this.ticks.sort((a, b) => a.time - b.time);
-    }
-
-    private calculate_path_length(): number {
-        let length = 0;
-        for (let i = 1; i < this.path.length; i++) {
-            length += vec2_len(vec2_sub(this.path[i], this.path[i - 1]));
+        const last = path[path.length - 1];
+        const last_added = result[result.length - 1];
+        if (last_added[0] !== last[0] || last_added[1] !== last[1]) {
+            result.push(last);
         }
-        return length;
+
+        return result;
     }
 
     update(time: number): void {
         super.update(time);
         this.calculate_ball_position(time);
         this.calculate_opacities(time);
+        this.head_visual.update(time, this.hit_object.time, this.config);
     }
 
     private calculate_ball_position(time: number): void {
@@ -140,9 +161,10 @@ export class DrawableSlider extends Drawable {
         // during slider
         if (time <= hit_object.end_time) {
             const elapsed = time - hit_object.time;
-            const repeat_time = elapsed % (span_duration * 2);
-            let t = repeat_time < span_duration ? repeat_time / span_duration : 2 - repeat_time / span_duration;
-            t = clamp(t, 0, 1);
+            const span_count = Math.max(1, this.slider_data.repetitions);
+            const span_index = Math.min(Math.floor(elapsed / span_duration), span_count - 1);
+            const span_progress = clamp((elapsed - span_index * span_duration) / span_duration, 0, 1);
+            const t = span_index % 2 === 1 ? 1 - span_progress : span_progress;
 
             this.ball_position = this.get_position_at_progress(t);
             this.ball_alpha = 1;
@@ -172,15 +194,15 @@ export class DrawableSlider extends Drawable {
 
     private get_position_at_length(target_length: number): Vec2 {
         let accumulated = 0;
-        for (let i = 1; i < this.path.length; i++) {
-            const segment_length = vec2_len(vec2_sub(this.path[i], this.path[i - 1]));
+        for (let i = 1; i < this.position_path.length; i++) {
+            const segment_length = vec2_len(vec2_sub(this.position_path[i], this.position_path[i - 1]));
             if (accumulated + segment_length >= target_length) {
                 const local_t = (target_length - accumulated) / segment_length;
-                return vec2_lerp(this.path[i - 1], this.path[i], local_t);
+                return vec2_lerp(this.position_path[i - 1], this.position_path[i], local_t);
             }
             accumulated += segment_length;
         }
-        return this.path[this.path.length - 1];
+        return this.position_path[this.position_path.length - 1];
     }
 
     private calculate_opacities(time: number): void {
@@ -188,59 +210,34 @@ export class DrawableSlider extends Drawable {
         const appear_time = hit_object.time - config.preempt;
         const hit_time = hit_object.time;
 
-        // body: fade in over fade_in, then fade out 240ms after end
-        if (time < appear_time) {
-            this.body_alpha = 0;
-        } else if (time < hit_time) {
-            this.body_alpha = clamp((time - appear_time) / config.fade_in, 0, 1);
-        } else if (time <= hit_object.end_time) {
-            this.body_alpha = 1;
-        } else {
-            this.body_alpha = 1 - clamp((time - hit_object.end_time) / FADE_OUT_DURATION, 0, 1);
-        }
-
-        // head: same fade in, hit animation at hit_time
-        if (time < appear_time) {
-            this.head_alpha = 0;
-            this.head_scale = 1;
-        } else if (time < hit_time) {
-            this.head_alpha = clamp((time - appear_time) / config.fade_in, 0, 1);
-            this.head_scale = 1;
-        } else if (time < hit_time + HEAD_ANIM_DURATION) {
-            const progress = (time - hit_time) / HEAD_ANIM_DURATION;
-            const eased = Easing.OutCubic(progress);
-            this.head_alpha = 1 - eased;
-            this.head_scale = 1 + eased * 0.5;
-        } else {
-            this.head_alpha = 0;
-        }
-
-        // HD Mod: gradual fade during slider duration, not instant
         if (has_mod(config.mods, Mods.Hidden)) {
-            const fade_in_end = hit_time - config.preempt + config.preempt * 0.4;
-            const fade_out_start = fade_in_end;
-
-            // long fade duration = from fade complete to slider end
-            const long_fade_duration = hit_object.end_time - fade_out_start;
-
-            if (time > fade_out_start && long_fade_duration > 0) {
-                const fade = 1 - clamp((time - fade_out_start) / long_fade_duration, 0, 1);
-                this.body_alpha *= fade;
+            const fade_out_start = hit_time - config.preempt + config.fade_in;
+            if (time < appear_time) {
+                this.body_alpha = 0;
+            } else if (time < fade_out_start) {
+                this.body_alpha = clamp((time - appear_time) / config.fade_in, 0, 1);
+            } else if (time <= hit_object.end_time) {
+                const denom = Math.max(1, hit_object.end_time - fade_out_start);
+                this.body_alpha = 1 - clamp((time - fade_out_start) / denom, 0, 1);
+            } else {
+                this.body_alpha = 0;
             }
-
-            // head fades with standard HD timing
-            const head_fade_out_start = hit_time - config.preempt * 0.4;
-            const head_fade_out_duration = config.preempt * 0.3;
-
-            if (time > head_fade_out_start) {
-                const fade = 1 - clamp((time - head_fade_out_start) / head_fade_out_duration, 0, 1);
-                this.head_alpha *= fade;
+        } else {
+            // body: fade in over fade_in, then fade out 240ms after end
+            if (time < appear_time) {
+                this.body_alpha = 0;
+            } else if (time < hit_time) {
+                this.body_alpha = clamp((time - appear_time) / config.fade_in, 0, 1);
+            } else if (time <= hit_object.end_time) {
+                this.body_alpha = 1;
+            } else {
+                this.body_alpha = 1 - clamp((time - hit_object.end_time) / FADE_OUT_DURATION, 0, 1);
             }
         }
     }
 
     render(time: number): void {
-        if (this.body_alpha <= 0 && this.head_alpha <= 0 && this.ball_alpha <= 0) {
+        if (this.body_alpha <= 0 && this.head_visual.circle_alpha <= 0 && this.ball_alpha <= 0) {
             return;
         }
 
@@ -260,18 +257,20 @@ export class DrawableSlider extends Drawable {
     }
 
     private render_body(time: number): void {
-        if (this.body_alpha <= 0.01 || this.path.length < 2) return;
+        if (this.body_alpha <= 0.01 || this.render_path.length < 2) return;
 
-        const { backend, skin, config, path } = this;
+        const { backend, skin, config } = this;
         const { radius } = config;
 
-        if (!this.cached_texture) {
+        const render_scale = (config.scale ?? 1) * (skin.slider_render_scale || 1);
+
+        if (!this.cached_texture || this.cached_scale !== render_scale) {
             const body_color = get_combo_color(skin, this.combo_number, 1);
             const border_color = skin.slider_border_color ?? "rgba(255,255,255,1)";
-            const scale = config.scale ?? 1;
+            const scale = render_scale;
 
             this.cached_texture = backend.render_slider_to_image(
-                path,
+                this.render_path,
                 radius,
                 border_color,
                 body_color,
@@ -279,10 +278,11 @@ export class DrawableSlider extends Drawable {
                 skin.slider_body_opacity,
                 skin.slider_border_opacity
             );
+            this.cached_scale = render_scale;
         }
 
         if (this.cached_texture && this.cached_texture.min_x !== undefined && this.cached_texture.min_y !== undefined) {
-            const scale = config.scale ?? 1;
+            const scale = this.cached_scale;
             backend.set_alpha(this.body_alpha);
             backend.draw_image(
                 this.cached_texture,
@@ -310,10 +310,10 @@ export class DrawableSlider extends Drawable {
         const ANIM_DURATION = 150;
         const SCALE_DURATION = ANIM_DURATION * 4;
 
-        for (const tick of this.ticks) {
-            // tick already passed
-            if (time > tick.time) continue;
+        const hidden = has_mod(config.mods, Mods.Hidden);
+        const hidden_fade_duration = Math.min(config.preempt - ANIM_DURATION, 1000);
 
+        for (const tick of this.ticks) {
             // tick not yet visible (snaking)
             if (snake_progress < tick.path_progress) continue;
 
@@ -325,6 +325,18 @@ export class DrawableSlider extends Drawable {
 
             // fade in over ANIM_DURATION (150ms)
             let tick_alpha = clamp(elapsed_since_appear / ANIM_DURATION, 0, 1);
+
+            if (hidden && hidden_fade_duration > 0) {
+                const fade_out_start = tick.time - hidden_fade_duration;
+                if (time >= fade_out_start) {
+                    const fade_out_progress = clamp((time - fade_out_start) / hidden_fade_duration, 0, 1);
+                    tick_alpha *= 1 - fade_out_progress;
+                }
+            } else if (time > tick.time) {
+                const fade_out_progress = clamp((time - tick.time) / ANIM_DURATION, 0, 1);
+                tick_alpha *= 1 - fade_out_progress;
+            }
+
             tick_alpha *= this.body_alpha;
 
             // scale from 0.5 to 1.0 over SCALE_DURATION with elastic out
@@ -392,7 +404,7 @@ export class DrawableSlider extends Drawable {
             if (alpha <= 0.01) continue;
 
             // calculate arrow direction
-            const curve = this.path;
+            const curve = this.position_path;
             let aim_rotation_vector: Vec2;
 
             if (is_at_end) {
@@ -457,31 +469,14 @@ export class DrawableSlider extends Drawable {
     }
 
     private render_head(): void {
-        if (this.head_alpha <= 0.01) return;
+        if (this.head_visual.circle_alpha <= 0.01) return;
 
         const { backend, skin, config } = this;
         const { radius } = config;
         const pos = this.slider_data.pos;
         const combo_color = get_combo_color(skin, this.combo_number, 1);
 
-        const inner_radius = radius * (1 - skin.circle_border_width / 2) * this.head_scale;
-        const border_width = radius * skin.circle_border_width * this.head_scale;
-
-        backend.set_alpha(this.head_alpha * skin.hit_circle_opacity);
-        backend.draw_circle(pos[0], pos[1], inner_radius, combo_color, "rgba(255,255,255,1)", border_width);
-
-        const font_size = radius * 0.8 * this.head_scale;
-        backend.draw_text(
-            String(this.combo_count),
-            pos[0],
-            pos[1] + font_size * 0.05,
-            `600 ${font_size}px ${skin.font_family}`,
-            "rgba(255,255,255,1)",
-            "center",
-            "middle"
-        );
-
-        backend.set_alpha(1);
+        this.head_visual.render(backend, skin, pos, radius, combo_color, this.combo_count);
     }
 
     private render_ball(time: number): void {

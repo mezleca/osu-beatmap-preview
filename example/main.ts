@@ -1,4 +1,15 @@
-import { BeatmapPlayer, Mods, mods_from_string, toggle_mod, has_mod, get_available_mods, type IBeatmap, type IBeatmapResources } from "../src";
+import {
+    BeatmapPlayer,
+    GameMode,
+    Mods,
+    mods_from_string,
+    toggle_mod,
+    has_mod,
+    get_available_mods,
+    load_default_fonts,
+    type IBeatmap,
+    type IBeatmapResources
+} from "../src";
 
 const $ = (id: string) => document.getElementById(id)!;
 
@@ -14,6 +25,9 @@ const time_el = $("time") as HTMLSpanElement;
 const drop_zone = $("drop-zone") as HTMLDivElement;
 const diff_select = $("diff-select") as HTMLSelectElement;
 
+// ensure fonts are loaded before first render
+await load_default_fonts();
+
 // player instance
 let player: BeatmapPlayer | null = null;
 let active_mods: number = 0;
@@ -21,6 +35,38 @@ let active_mods: number = 0;
 const format_time = (ms: number): string => {
     const s = Math.floor(ms / 1000);
     return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
+};
+
+const update_progress = (time: number, duration: number) => {
+    const safe_duration = Math.max(1, duration);
+    const pct = (time / safe_duration) * 100;
+    progress_fill.style.width = `${pct}%`;
+    time_el.textContent = `${format_time(time)} / ${format_time(duration)}`;
+};
+
+const resolve_mode = (beatmap: IBeatmap | null): "standard" | "taiko" | "catch" | "mania" => {
+    if (!beatmap) return "standard";
+    switch (beatmap.mode) {
+        case GameMode.Taiko:
+            return "taiko";
+        case GameMode.Catch:
+            return "catch";
+        case GameMode.Mania:
+            return "mania";
+        default:
+            return "standard";
+    }
+};
+
+const normalize_mods_for_mode = (mods: number, mode: "standard" | "taiko" | "catch" | "mania"): number => {
+    const available = get_available_mods(mode).map((mod) => mod.value);
+    let filtered = 0;
+    for (const value of available) {
+        if (has_mod(mods, value)) {
+            filtered |= value;
+        }
+    }
+    return filtered;
 };
 
 const resize_canvas = () => {
@@ -41,6 +87,13 @@ let setup_player_events = (p: BeatmapPlayer) => {
         play_btn.disabled = false;
         stop_btn.disabled = false;
 
+        const mode = resolve_mode(beatmap);
+        active_mods = normalize_mods_for_mode(active_mods, mode);
+        if (player?.is_loaded) {
+            player.set_mods(active_mods);
+        }
+        update_progress(player?.current_time ?? 0, player?.duration ?? 0);
+
         // populate difficulty selector
         if (resources.available_difficulties.length > 1) {
             diff_select.style.display = "block";
@@ -58,9 +111,7 @@ let setup_player_events = (p: BeatmapPlayer) => {
     });
 
     p.on("timeupdate", (time, duration) => {
-        const pct = duration > 0 ? (time / duration) * 100 : 0;
-        progress_fill.style.width = `${pct}%`;
-        time_el.textContent = `${format_time(time)} / ${format_time(duration)}`;
+        update_progress(time, duration);
     });
 
     p.on("statechange", (playing) => {
@@ -74,6 +125,10 @@ let setup_player_events = (p: BeatmapPlayer) => {
     p.on("error", (code, reason) => {
         title_el.textContent = `Error: ${reason}`;
         subtitle_el.textContent = "";
+    });
+
+    p.on("seek", (time) => {
+        update_progress(time, player?.duration ?? 0);
     });
 };
 
@@ -137,6 +192,9 @@ play_btn.addEventListener("click", () => {
 
 stop_btn.addEventListener("click", () => {
     player?.stop();
+    if (player) {
+        update_progress(player.current_time, player.duration);
+    }
 });
 
 progress_bar.addEventListener("click", (e) => {
@@ -158,7 +216,8 @@ const mods_container = $("mods-container") as HTMLDivElement;
 
 const render_mod_buttons = () => {
     // default to standard if no player or beatmap loaded yet
-    const mode = player?.mode || "standard";
+    const mode = resolve_mode(player?.beatmap ?? null);
+    active_mods = normalize_mods_for_mode(active_mods, mode);
     const available = get_available_mods(mode as any);
 
     mods_container.innerHTML = "";
@@ -201,23 +260,37 @@ document.addEventListener("keydown", (e) => {
             player.toggle_pause();
             break;
         case "ArrowLeft":
-            e.preventDefault();
-            player.seek(Math.max(0, player.current_time - 5000));
+            player.seek(player.current_time - 5000);
             break;
         case "ArrowRight":
-            e.preventDefault();
-            player.seek(Math.min(player.duration, player.current_time + 5000));
-            break;
-        case "KeyG":
-            player.toggle_grid();
-            break;
-        case "ArrowUp":
-            e.preventDefault();
-            player.seek(Math.max(0, player.current_time - 1000));
-            break;
-        case "ArrowDown":
-            e.preventDefault();
-            player.seek(Math.min(player.duration, player.current_time + 1000));
+            player.seek(player.current_time + 5000);
             break;
     }
 });
+
+const apply_scroll_seek = (delta_y: number, is_precise: boolean) => {
+    if (!player?.is_loaded) return;
+    const direction = delta_y > 0 ? 1 : -1;
+    const step = is_precise ? 1000 : 5000;
+    player.seek(player.current_time + direction * step);
+};
+
+canvas.addEventListener(
+    "wheel",
+    (e) => {
+        if (!player?.is_loaded) return;
+        e.preventDefault();
+        apply_scroll_seek(e.deltaY, e.shiftKey);
+    },
+    { passive: false }
+);
+
+progress_bar.addEventListener(
+    "wheel",
+    (e) => {
+        if (!player?.is_loaded) return;
+        e.preventDefault();
+        apply_scroll_seek(e.deltaY, e.shiftKey);
+    },
+    { passive: false }
+);

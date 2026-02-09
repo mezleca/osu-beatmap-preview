@@ -28,6 +28,7 @@ export interface ISkinConfig {
     slider_tick_size: number;
     slider_border_color?: string;
     slider_track_override?: string;
+    slider_render_scale: number;
 
     // follow circle (slider ball outer ring)
     follow_circle_factor: number;
@@ -43,6 +44,10 @@ export interface ISkinConfig {
 
     // follow points (dots between objects)
     follow_point_width: number;
+    follow_point_shape: "circle" | "line";
+    follow_point_mode: "segments" | "full";
+    follow_point_length: number;
+    follow_point_line_gap: number;
 
     // spinner
     spinner_size: number;
@@ -99,6 +104,7 @@ export const DEFAULT_SKIN: ISkinConfig = {
     slider_border_opacity: 1.0,
     slider_tick_opacity: 0.75,
     slider_tick_size: 0.1,
+    slider_render_scale: 2.0,
 
     follow_circle_factor: 1.5,
     follow_circle_width: 4,
@@ -111,6 +117,10 @@ export const DEFAULT_SKIN: ISkinConfig = {
     enable_slider_ball: true,
 
     follow_point_width: 2,
+    follow_point_shape: "line",
+    follow_point_mode: "full",
+    follow_point_length: 12,
+    follow_point_line_gap: 0,
 
     spinner_size: 180,
     spinner_center_size: 10,
@@ -121,9 +131,9 @@ export const DEFAULT_SKIN: ISkinConfig = {
     mania_lane_spacing: 1,
     mania_lane_colors: MANIA_KEY_COLORS,
 
-    font_family: '"Exo 2", sans-serif',
-    hit_animation_duration: 300,
-    hit_animation_scale: 1.3,
+    font_family: '"Kozuka Gothic Pro B", "Kozuka Gothic Pro R", "Aller", "Exo 2", sans-serif',
+    hit_animation_duration: 240,
+    hit_animation_scale: 1.2,
 
     enable_hit_animations: true,
     enable_follow_circle_animations: true

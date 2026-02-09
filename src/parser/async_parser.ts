@@ -1,47 +1,57 @@
 import type { IBeatmap, IBeatmapInfo } from "../types/beatmap";
-import { BeatmapParser, extract_audio_filename, extract_background_filename, extract_video_info, extract_preview_time } from "./beatmap_parser";
+import {
+    BeatmapParser,
+    extract_audio_filename,
+    extract_background_filename,
+    extract_video_info,
+    extract_preview_time,
+    init_wasm_parser
+} from "./beatmap_parser";
 
 const parser = new BeatmapParser();
 
-const defer = <T>(fn: () => T): Promise<T> => {
-    return new Promise((resolve, reject) => {
-        queueMicrotask(() => {
-            try {
-                resolve(fn());
-            } catch (e) {
-                reject(e);
-            }
-        });
-    });
-};
-
 export class AsyncBeatmapParser {
-    parse(content: string): Promise<IBeatmap> {
-        return defer(() => parser.parse(content));
+    private init_promise: Promise<void> | null = null;
+
+    private ensure_ready(): Promise<void> {
+        if (!this.init_promise) {
+            this.init_promise = init_wasm_parser();
+        }
+        return this.init_promise;
     }
 
-    parse_info(content: string, filename: string): Promise<IBeatmapInfo> {
-        return defer(() => parser.parse_info(content, filename));
+    async parse(content: string | Uint8Array): Promise<IBeatmap> {
+        await this.ensure_ready();
+        return parser.parse(content);
     }
 
-    extract_audio_filename(content: string): Promise<string | null> {
-        return defer(() => extract_audio_filename(content));
+    async parse_info(content: string | Uint8Array, filename: string): Promise<IBeatmapInfo> {
+        await this.ensure_ready();
+        return parser.parse_info(content, filename);
     }
 
-    extract_background_filename(content: string): Promise<string | null> {
-        return defer(() => extract_background_filename(content));
+    async extract_audio_filename(content: string | Uint8Array): Promise<string | null> {
+        await this.ensure_ready();
+        return extract_audio_filename(content);
     }
 
-    extract_video_info(content: string): Promise<{ filename: string; offset: number } | null> {
-        return defer(() => extract_video_info(content));
+    async extract_background_filename(content: string | Uint8Array): Promise<string | null> {
+        await this.ensure_ready();
+        return extract_background_filename(content);
     }
 
-    extract_preview_time(content: string): Promise<number> {
-        return defer(() => extract_preview_time(content));
+    async extract_video_info(content: string | Uint8Array): Promise<{ filename: string; offset: number } | null> {
+        await this.ensure_ready();
+        return extract_video_info(content);
+    }
+
+    async extract_preview_time(content: string | Uint8Array): Promise<number> {
+        await this.ensure_ready();
+        return extract_preview_time(content);
     }
 
     dispose(): void {
-        // no-op for sync implementation
+        this.init_promise = null;
     }
 }
 

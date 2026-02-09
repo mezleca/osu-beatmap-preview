@@ -26,7 +26,8 @@
         "example": "bun run --hot example/server.ts"
     },
     "dependencies": {
-        "jszip": "^3.10.1"
+        "jszip": "^3.10.1",
+        "@rel-packages/osu-beatmap-parser": "^1.4.2"
     },
     "devDependencies": {
         "@types/bun": "^1.1.0",

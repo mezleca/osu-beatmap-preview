@@ -28,6 +28,32 @@ const server = Bun.serve({
             }
         }
 
+        if (path.startsWith("/browser/")) {
+            const rel = path.replace("/browser/", "");
+            const dist_file = Bun.file(`./dist/browser/${rel}`);
+            if (await dist_file.exists()) {
+                return new Response(dist_file);
+            }
+
+            const node_modules_file = Bun.file(`./node_modules/@rel-packages/osu-beatmap-parser/dist/browser/${rel}`);
+            if (await node_modules_file.exists()) {
+                return new Response(node_modules_file);
+            }
+        }
+
+        if (path.startsWith("/assets/")) {
+            const rel = path.replace("/assets/", "");
+            const dist_file = Bun.file(`./dist/assets/${rel}`);
+            if (await dist_file.exists()) {
+                return new Response(dist_file);
+            }
+
+            const src_file = Bun.file(`./src/assets/${rel}`);
+            if (await src_file.exists()) {
+                return new Response(src_file);
+            }
+        }
+
         const file = Bun.file(`./example${path}`);
 
         if (await file.exists()) {

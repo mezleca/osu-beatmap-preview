@@ -1,341 +1,293 @@
 import type { IBeatmap, IHitObject, ICircleData, ISliderData, ISpinnerData, IHoldData, SliderPathType, IBeatmapInfo } from "../types/beatmap";
-import { GameMode, HitObjectType } from "../types/beatmap";
+import { GameMode, HitObjectType, SampleSet } from "../types/beatmap";
+import {
+    init_wasm_from_url,
+    is_wasm_ready,
+    parse as wasm_parse,
+    get_property as wasm_get_property,
+    get_properties as wasm_get_properties,
+    get_section as wasm_get_section,
+    set_wasm_factory
+} from "@rel-packages/osu-beatmap-parser/dist/lib/wasm-wrapper.js";
+import type { OsuFileFormat } from "@rel-packages/osu-beatmap-parser/dist/types/types";
 
-export class BeatmapParser {
-    private beatmap!: IBeatmap;
-    private section: string = "";
+type wasm_parser_options = {
+    script_url?: string;
+    global_name?: string;
+    module_config?: Record<string, unknown>;
+    factory?: (module_config?: Record<string, unknown>) => any;
+};
 
-    parse(content: string): IBeatmap {
-        this.beatmap = this.create_empty_beatmap();
-        this.section = "";
+let wasm_options: wasm_parser_options | null = null;
+let wasm_init_promise: Promise<void> | null = null;
+const encoder = new TextEncoder();
+const default_wasm_url =
+    typeof window !== "undefined"
+        ? new URL("/browser/osu-parser.browser.js", window.location.origin).toString()
+        : new URL("./browser/osu-parser.browser.js", import.meta.url).toString();
 
-        const lines = content.split("\n");
+export const configure_wasm_parser = (options: wasm_parser_options): void => {
+    wasm_options = options;
 
-        for (const line of lines) {
-            this.parse_line(line);
-        }
+    if (options.factory) {
+        set_wasm_factory(options.factory, options.global_name);
+    }
+};
 
-        // fallback: old maps have no AR, use OD
-        if (this.beatmap.ar === -1) {
-            this.beatmap.ar = this.beatmap.od;
-        }
+const ensure_wasm_ready = async (): Promise<void> => {
+    if (is_wasm_ready()) return;
+    if (wasm_init_promise) return wasm_init_promise;
 
-        return this.beatmap;
+    const options = wasm_options ?? {};
+    const script_url = options.script_url ?? default_wasm_url;
+    wasm_init_promise = init_wasm_from_url(script_url, options.module_config ?? {}, options.global_name);
+
+    return wasm_init_promise;
+};
+
+export const init_wasm_parser = async (options?: wasm_parser_options): Promise<void> => {
+    if (options) {
+        configure_wasm_parser(options);
+    }
+    return ensure_wasm_ready();
+};
+
+const assert_wasm_ready = (): void => {
+    if (!is_wasm_ready()) {
+        throw new Error("WASM parser not initialized. Call init_wasm_parser or configure_wasm_parser.");
+    }
+};
+
+const to_bytes = (content: string): Uint8Array => encoder.encode(content);
+const to_data = (content: string | Uint8Array): Uint8Array => (typeof content === "string" ? to_bytes(content) : content);
+
+const parse_hit_sample = (sample: { normalSet: number; additionSet: number; index: number; volume: number; filename: string }) => {
+    return {
+        normal_set: sample.normalSet as SampleSet,
+        addition_set: sample.additionSet as SampleSet,
+        index: sample.index,
+        volume: sample.volume,
+        filename: sample.filename || undefined
+    };
+};
+
+const build_timing_points = (file: OsuFileFormat) => {
+    const result = [] as IBeatmap["timing_points"];
+    const timing_points = [...file.TimingPoints].sort((a, b) => {
+        if (a.time !== b.time) return a.time - b.time;
+        return b.uninherited - a.uninherited;
+    });
+    let current_beat_length = 500;
+    const first_red = timing_points.find((tp) => tp.uninherited === 1 && tp.beatLength > 0);
+    if (first_red && first_red.beatLength > 0) {
+        current_beat_length = first_red.beatLength;
     }
 
-    parse_info(content: string, filename: string): IBeatmapInfo {
-        this.beatmap = this.create_empty_beatmap();
-        this.section = "";
+    for (const tp of timing_points) {
+        const ms_per_beat = tp.beatLength;
+        const is_inherited = tp.uninherited === 0 || ms_per_beat < 0;
 
-        const lines = content.split("\n");
-
-        for (const line of lines) {
-            this.parse_line(line);
-            // stop after difficulty section to save time
-            if (this.section === "Events" || this.section === "TimingPoints" || this.section === "Colours" || this.section === "HitObjects") {
-                break;
-            }
-        }
-
-        if (this.beatmap.ar === -1) {
-            this.beatmap.ar = this.beatmap.od;
-        }
-
-        return {
-            filename,
-            title: this.beatmap.title,
-            artist: this.beatmap.artist,
-            version: this.beatmap.version,
-            mode: this.beatmap.mode,
-            ar: this.beatmap.ar,
-            cs: this.beatmap.cs,
-            od: this.beatmap.od,
-            hp: this.beatmap.hp
-        };
-    }
-
-    private create_empty_beatmap(): IBeatmap {
-        return {
-            format_version: 1,
-            mode: GameMode.Standard,
-            title: "",
-            title_unicode: "",
-            artist: "",
-            artist_unicode: "",
-            creator: "",
-            version: "",
-            ar: -1,
-            cs: 5,
-            od: 5,
-            hp: 5,
-            sv: 1,
-            tick_rate: 1,
-            timing_points: [],
-            objects: [],
-            circle_count: 0,
-            slider_count: 0,
-            spinner_count: 0,
-            hold_count: 0
-        };
-    }
-
-    private parse_line(raw_line: string): void {
-        if (raw_line.startsWith(" ") || raw_line.startsWith("_")) return;
-
-        const line = raw_line.trim();
-        if (line.length === 0 || line.startsWith("//")) return;
-
-        if (line.startsWith("[") && line.endsWith("]")) {
-            this.section = line.slice(1, -1);
-            return;
-        }
-
-        const format_match = line.match(/osu file format v(\d+)/);
-        if (format_match) {
-            this.beatmap.format_version = parseInt(format_match[1]);
-            return;
-        }
-
-        switch (this.section) {
-            case "General":
-                this.parse_general(line);
-                break;
-            case "Metadata":
-                this.parse_metadata(line);
-                break;
-            case "Difficulty":
-                this.parse_difficulty(line);
-                break;
-            case "TimingPoints":
-                this.parse_timing_point(line);
-                break;
-            case "HitObjects":
-                this.parse_hit_object(line);
-                break;
-        }
-    }
-
-    private parse_general(line: string): void {
-        const [key, value] = this.split_property(line);
-        if (key === "Mode") this.beatmap.mode = parseInt(value) as GameMode;
-    }
-
-    private parse_metadata(line: string): void {
-        const [key, value] = this.split_property(line);
-        switch (key) {
-            case "Title":
-                this.beatmap.title = value;
-                break;
-            case "TitleUnicode":
-                this.beatmap.title_unicode = value;
-                break;
-            case "Artist":
-                this.beatmap.artist = value;
-                break;
-            case "ArtistUnicode":
-                this.beatmap.artist_unicode = value;
-                break;
-            case "Creator":
-                this.beatmap.creator = value;
-                break;
-            case "Version":
-                this.beatmap.version = value;
-                break;
-        }
-    }
-
-    private parse_difficulty(line: string): void {
-        const [key, value] = this.split_property(line);
-        const num = parseFloat(value);
-        switch (key) {
-            case "CircleSize":
-                this.beatmap.cs = num;
-                break;
-            case "OverallDifficulty":
-                this.beatmap.od = num;
-                break;
-            case "ApproachRate":
-                this.beatmap.ar = num;
-                break;
-            case "HPDrainRate":
-                this.beatmap.hp = num;
-                break;
-            case "SliderMultiplier":
-                this.beatmap.sv = num;
-                break;
-            case "SliderTickRate":
-                this.beatmap.tick_rate = num;
-                break;
-        }
-    }
-
-    private current_beat_length: number = 500;
-
-    private parse_timing_point(line: string): void {
-        const parts = line.split(",");
-        if (parts.length < 2) return;
-
-        const time = parseFloat(parts[0]);
-        const ms_per_beat = parseFloat(parts[1]);
-        const sample_set = parseInt(parts[3] ?? "0");
-        const sample_index = parseInt(parts[4] ?? "0");
-        const volume = parseInt(parts[5] ?? "100");
-        const change = parts.length >= 7 ? parts[6].trim() !== "0" : true;
-        const kiai = parts.length >= 8 ? (parseInt(parts[7]) & 1) !== 0 : false;
-
-        // inherited points have negative ms_per_beat
-        const is_inherited = ms_per_beat < 0;
-        const velocity = is_inherited ? -100 / ms_per_beat : 1.0;
-
-        // beat_length comes from uninherited (red) points only
         if (!is_inherited && ms_per_beat > 0) {
-            this.current_beat_length = ms_per_beat;
+            current_beat_length = ms_per_beat;
         }
 
-        this.beatmap.timing_points.push({
-            time,
+        result.push({
+            time: tp.time,
             ms_per_beat,
-            change,
-            sample_set,
-            sample_index,
-            volume,
-            kiai,
-            velocity,
-            beat_length: this.current_beat_length
+            change: !is_inherited,
+            sample_set: tp.sampleSet as SampleSet,
+            sample_index: tp.sampleIndex,
+            volume: tp.volume,
+            kiai: (tp.effects & 1) !== 0,
+            velocity: is_inherited ? -100 / ms_per_beat : 1.0,
+            beat_length: current_beat_length
         });
     }
 
-    private parse_hit_object(line: string): void {
-        const parts = line.split(",");
-        if (parts.length < 4) return;
+    return result;
+};
 
-        const x = parseFloat(parts[0]);
-        const y = parseFloat(parts[1]);
-        const time = parseFloat(parts[2]);
-        const type = parseInt(parts[3]);
-        const hit_sound = parseInt(parts[4] ?? "0");
+const build_hit_objects = (file: OsuFileFormat): IHitObject[] => {
+    const objects: IHitObject[] = [];
 
+    for (const ho of file.HitObjects) {
         const obj: IHitObject = {
-            time,
-            type,
-            hit_sound,
-            end_time: time,
-            end_pos: [x, y],
+            time: ho.time,
+            type: ho.type,
+            hit_sound: ho.hitSound,
+            end_time: ho.endTime || ho.time,
+            end_pos: [ho.x, ho.y],
             combo_number: 0,
             combo_count: 0,
-            data: { pos: [x, y] } as ICircleData
+            data: { pos: [ho.x, ho.y] } as ICircleData
         };
 
-        if (type & HitObjectType.Circle) {
-            this.beatmap.circle_count++;
-            obj.data = { pos: [x, y] } as ICircleData;
-            this.parse_extras(parts, 5, obj);
-        } else if (type & HitObjectType.Slider) {
-            if (parts.length < 8) return;
-            this.beatmap.slider_count++;
-            const slider_data = this.parse_slider_data(parts, x, y);
+        if (ho.hitSample) {
+            obj.hit_sample = parse_hit_sample(ho.hitSample);
+        }
+
+        if (ho.edgeSounds?.length) {
+            obj.edge_sounds = [...ho.edgeSounds];
+        }
+
+        if (ho.edgeSets?.length) {
+            obj.edge_sets = ho.edgeSets.map((set) => [set.normalSet as SampleSet, set.additionSet as SampleSet]);
+        }
+
+        if (ho.type & HitObjectType.Circle) {
+            obj.data = { pos: [ho.x, ho.y] } as ICircleData;
+        } else if (ho.type & HitObjectType.Slider) {
+            const slider_data: ISliderData = {
+                pos: [ho.x, ho.y],
+                path_type: (ho.curveType || "L") as SliderPathType,
+                control_points: ho.curvePoints.map((p) => [p.x, p.y] as [number, number]),
+                repetitions: ho.slides || 1,
+                distance: ho.length || 0
+            };
+
             obj.data = slider_data;
-
-            // sliders have variable length fields (edgeSounds, edgeSets) before hitSample
-            // usually: curve, slides, length, edgeSounds, edgeSets, hitSample
-            // hitSample is strictly the last part if present
-
-            // edgeSounds
-            if (parts.length > 8) {
-                obj.edge_sounds = parts[8].split("|").map((s) => parseInt(s));
-            }
-
-            // edgeSets
-            if (parts.length > 9) {
-                obj.edge_sets = parts[9].split("|").map((s) => {
-                    const sets = s.split(":");
-                    return [parseInt(sets[0]), parseInt(sets[1])];
-                });
-            }
-
-            this.parse_extras(parts, 10, obj);
-        } else if (type & HitObjectType.Spinner) {
-            this.beatmap.spinner_count++;
-            const end_time = parseInt(parts[5]);
+        } else if (ho.type & HitObjectType.Spinner) {
+            const end_time = ho.endTime || ho.time;
             obj.data = { end_time } as ISpinnerData;
             obj.end_time = end_time;
             obj.end_pos = [256, 192];
-            this.parse_extras(parts, 6, obj);
-        } else if (type & HitObjectType.Hold) {
-            this.beatmap.hold_count++;
-            const end_time = parseInt(parts[5].split(":")[0]);
-            obj.data = { pos: [x, y], end_time } as IHoldData;
+        } else if (ho.type & HitObjectType.Hold) {
+            const end_time = ho.endTime || ho.time;
+            obj.data = { pos: [ho.x, ho.y], end_time } as IHoldData;
             obj.end_time = end_time;
-            this.parse_extras(parts, 6, obj);
         }
 
-        this.beatmap.objects.push(obj);
+        objects.push(obj);
     }
 
-    private parse_extras(parts: string[], index: number, obj: IHitObject): void {
-        if (index < parts.length) {
-            const sample_str = parts[index];
-            if (sample_str && sample_str.includes(":")) {
-                const sample_parts = sample_str.split(":");
-                obj.hit_sample = {
-                    normal_set: parseInt(sample_parts[0]),
-                    addition_set: parseInt(sample_parts[1]),
-                    index: parseInt(sample_parts[2]),
-                    volume: parseInt(sample_parts[3]),
-                    filename: sample_parts[4] || undefined
-                };
-            }
-        }
+    return objects;
+};
+
+const build_beatmap = (file: OsuFileFormat): IBeatmap => {
+    const beatmap: IBeatmap = {
+        format_version: file.version,
+        mode: file.General.Mode as GameMode,
+        title: file.Metadata.Title,
+        title_unicode: file.Metadata.TitleUnicode,
+        artist: file.Metadata.Artist,
+        artist_unicode: file.Metadata.ArtistUnicode,
+        creator: file.Metadata.Creator,
+        version: file.Metadata.Version,
+        ar: file.Difficulty.ApproachRate,
+        cs: file.Difficulty.CircleSize,
+        od: file.Difficulty.OverallDifficulty,
+        hp: file.Difficulty.HPDrainRate,
+        sv: file.Difficulty.SliderMultiplier,
+        tick_rate: file.Difficulty.SliderTickRate,
+        timing_points: [],
+        objects: [],
+        circle_count: 0,
+        slider_count: 0,
+        spinner_count: 0,
+        hold_count: 0
+    };
+
+    beatmap.timing_points = build_timing_points(file);
+    beatmap.objects = build_hit_objects(file);
+
+    for (const obj of beatmap.objects) {
+        if (obj.type & HitObjectType.Circle) beatmap.circle_count++;
+        else if (obj.type & HitObjectType.Slider) beatmap.slider_count++;
+        else if (obj.type & HitObjectType.Spinner) beatmap.spinner_count++;
+        else if (obj.type & HitObjectType.Hold) beatmap.hold_count++;
     }
 
-    private parse_slider_data(parts: string[], x: number, y: number): ISliderData {
-        const curve_data = parts[5].split("|");
-        const path_type = curve_data[0] as SliderPathType;
+    if (beatmap.ar === -1) {
+        beatmap.ar = beatmap.od;
+    }
 
-        const control_points: [number, number][] = [];
-        for (let i = 1; i < curve_data.length; i++) {
-            const point = curve_data[i].split(":");
-            control_points.push([parseInt(point[0]), parseInt(point[1])]);
-        }
+    return beatmap;
+};
 
-        const repetitions = parseInt(parts[6]);
-        const distance = parseFloat(parts[7]);
+const parse_video_info = (lines: string[]): { filename: string; offset: number } | null => {
+    for (const line of lines) {
+        const parts = line.split(",");
+        if (parts.length < 3) continue;
+
+        const event_type = parts[0].trim();
+        if (event_type !== "Video" && event_type !== "1") continue;
+
+        const offset = parseInt(parts[1]);
+        const filename = parts[2].replace(/^"|"$/g, "");
+        if (!filename) continue;
+
+        return { filename, offset: Number.isFinite(offset) ? offset : 0 };
+    }
+
+    return null;
+};
+
+export class BeatmapParser {
+    parse(content: string | Uint8Array): IBeatmap {
+        assert_wasm_ready();
+        const data = to_data(content);
+        const file = wasm_parse(data);
+        return build_beatmap(file);
+    }
+
+    parse_info(content: string | Uint8Array, filename: string): IBeatmapInfo {
+        assert_wasm_ready();
+        const data = to_data(content);
+        const props = wasm_get_properties(data, [
+            "Title",
+            "Artist",
+            "Version",
+            "Mode",
+            "ApproachRate",
+            "CircleSize",
+            "OverallDifficulty",
+            "HPDrainRate"
+        ]);
+
+        const ar = parseFloat(props.ApproachRate ?? "-1");
+        const od = parseFloat(props.OverallDifficulty ?? "5");
 
         return {
-            pos: [x, y],
-            path_type,
-            control_points,
-            repetitions,
-            distance
+            filename,
+            title: props.Title ?? "",
+            artist: props.Artist ?? "",
+            version: props.Version ?? "",
+            mode: parseInt(props.Mode ?? "0") as GameMode,
+            ar: Number.isFinite(ar) && ar >= 0 ? ar : od,
+            cs: parseFloat(props.CircleSize ?? "5"),
+            od,
+            hp: parseFloat(props.HPDrainRate ?? "5")
         };
-    }
-
-    private split_property(line: string): [string, string] {
-        const idx = line.indexOf(":");
-        if (idx === -1) return [line, ""];
-        return [line.slice(0, idx).trim(), line.slice(idx + 1).trim()];
     }
 }
 
-const HEADER_LIMIT = 4096;
-
-export const extract_preview_time = (content: string): number => {
-    const match = content.slice(0, HEADER_LIMIT).match(/PreviewTime:\s*([+-]?\d+)/);
-    return match ? parseInt(match[1]) : -1;
+export const extract_preview_time = (content: string | Uint8Array): number => {
+    assert_wasm_ready();
+    const data = to_data(content);
+    const value = wasm_get_property(data, "PreviewTime");
+    const num = parseInt(value);
+    return Number.isFinite(num) ? num : -1;
 };
 
-export const extract_audio_filename = (content: string): string | null => {
-    const match = content.slice(0, HEADER_LIMIT).match(/AudioFilename:\s*(.+)/);
-    return match ? match[1].trim() : null;
+export const extract_audio_filename = (content: string | Uint8Array): string | null => {
+    assert_wasm_ready();
+    const data = to_data(content);
+    const value = wasm_get_property(data, "AudioFilename");
+    return value ? value : null;
 };
 
-export const extract_background_filename = (content: string): string | null => {
-    const match = content.slice(0, HEADER_LIMIT).match(/0,0,"([^"]+)"/);
-    return match ? match[1] : null;
+export const extract_background_filename = (content: string | Uint8Array): string | null => {
+    assert_wasm_ready();
+    const data = to_data(content);
+    const value = wasm_get_property(data, "Background");
+    return value ? value : null;
 };
 
-export const extract_video_info = (content: string): { filename: string; offset: number } | null => {
-    const match = content.slice(0, HEADER_LIMIT).match(/(?:Video|1),(-?\d+),"([^"]+)"/);
-    if (!match) return null;
-    return { offset: parseInt(match[1]), filename: match[2] };
+export const extract_video_info = (content: string | Uint8Array): { filename: string; offset: number } | null => {
+    assert_wasm_ready();
+    const data = to_data(content);
+    const events = wasm_get_section(data, "Events");
+    return parse_video_info(events);
 };
+
+export const get_wasm_ready = (): boolean => is_wasm_ready();

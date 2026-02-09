@@ -1,6 +1,6 @@
 import { type Vec2, vec2_add, vec2_sub, vec2_mul, vec2_len, vec2_lerp } from "./vector2";
 
-export const flatten_bezier = (points: Vec2[], tolerance: number = 0.25): Vec2[] => {
+export const flatten_bezier = (points: Vec2[], tolerance: number = 0.08): Vec2[] => {
     if (points.length < 2) return [...points];
 
     const result: Vec2[] = [];
@@ -110,15 +110,27 @@ export const flatten_perfect = (points: Vec2[], distance: number): Vec2[] => {
     if (ccw && arc_angle < 0) arc_angle += 2 * Math.PI;
     if (!ccw && arc_angle > 0) arc_angle -= 2 * Math.PI;
 
+    if (Math.abs(arc_angle) > Math.PI) {
+        return flatten_bezier(points);
+    }
+
     const arc_length = Math.abs(arc_angle) * radius;
 
-    // generate points along arc
-    const num_points = Math.max(2, Math.ceil((Math.abs(arc_angle) * radius) / 4));
+    // match osu! arc approximation (max error ~= 0.1)
+    let num_points = 2;
+    if (radius * 2 > 0.1) {
+        const theta_range = Math.abs(arc_angle);
+        const step = 2 * Math.acos(1 - 0.1 / radius);
+        num_points = Math.max(2, Math.ceil(theta_range / step));
+        if (num_points >= 1000) {
+            num_points = 1000;
+        }
+    }
     const result: Vec2[] = [];
 
     for (let i = 0; i <= num_points; i++) {
         const t = i / num_points;
-        const angle = start_angle + arc_angle * t * Math.min(1, distance / arc_length);
+        const angle = start_angle + arc_angle * t;
         result.push([center[0] + radius * Math.cos(angle), center[1] + radius * Math.sin(angle)]);
     }
 
@@ -149,7 +161,8 @@ export const flatten_catmull = (points: Vec2[]): Vec2[] => {
         const p2 = points[i + 1];
         const p3 = points[Math.min(points.length - 1, i + 2)];
 
-        const segments = 50;
+        const segment_length = vec2_len(vec2_sub(p2, p1));
+        const segments = Math.max(8, Math.ceil(segment_length / 3));
         for (let j = 0; j <= segments; j++) {
             const t = j / segments;
             result.push(catmull_point(p0, p1, p2, p3, t));

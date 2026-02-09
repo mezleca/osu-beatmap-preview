@@ -1,4 +1,6 @@
-import { rmSync, mkdirSync } from "fs";
+import { rmSync, mkdirSync, cpSync } from "fs";
+import { existsSync, copyFileSync } from "fs";
+import { dirname, join } from "path";
 
 const OUT_DIR = "./dist";
 
@@ -42,6 +44,22 @@ const OUT_DIR = "./dist";
     }
 
     await tsc.exited;
+
+    const wasm_source = join("node_modules", "@rel-packages", "osu-beatmap-parser", "dist", "browser", "osu-parser.browser.js");
+    const wasm_target = join(OUT_DIR, "browser", "osu-parser.browser.js");
+
+    if (existsSync(wasm_source)) {
+        mkdirSync(dirname(wasm_target), { recursive: true });
+        copyFileSync(wasm_source, wasm_target);
+    } else {
+        console.warn("[warn] wasm bundle not found. run bun install or ensure @rel-packages/osu-beatmap-parser is installed.");
+    }
+
+    const assets_source = join("src", "assets");
+    const assets_target = join(OUT_DIR, "assets");
+    if (existsSync(assets_source)) {
+        cpSync(assets_source, assets_target, { recursive: true });
+    }
 
     console.log("build complete!");
     console.log(

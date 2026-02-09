@@ -69,9 +69,11 @@ export interface IRenderBackend {
     draw_rect_gradient(x: number, y: number, width: number, height: number, gradient: any): void;
     create_linear_gradient(x0: number, y0: number, x1: number, y1: number, stops: GradientStop[]): any;
     draw_text(text: string, x: number, y: number, font: string, fill_color: string, align?: TextAlign, baseline?: TextBaseline): void;
+    measure_text?(text: string, font: string): TextMetrics | null;
     begin_path(): void;
     move_to(x: number, y: number): void;
     line_to(x: number, y: number): void;
+    draw_line(x0: number, y0: number, x1: number, y1: number, color: string, width: number, cap?: LineCap, join?: LineJoin): void;
     bezier_curve_to(cp1x: number, cp1y: number, cp2x: number, cp2y: number, x: number, y: number): void;
     quadratic_curve_to(cpx: number, cpy: number, x: number, y: number): void;
     arc_to(x: number, y: number, radius: number, start: number, end: number, ccw?: boolean): void;

@@ -1,4 +1,4 @@
-import type { IBeatmap, IHitObject, IBeatmapInfo } from "../types/beatmap";
+import type { IBeatmap, IHitObject, IBeatmapInfo, ITimingPoint } from "../types/beatmap";
 import { GameMode, SampleSet } from "../types/beatmap";
 import type { IBeatmapResources } from "../types/resources";
 import { type Result, ErrorCode, ok, err } from "../types/result";
@@ -14,6 +14,13 @@ import { AudioController } from "./audio_controller";
 import { VideoController } from "./video_controller";
 import { HitsoundController } from "./hitsound_controller";
 import { type ISkinConfig, merge_skin } from "../skin/skin_config";
+import { wait_for_fonts_ready } from "../fonts";
+import { BeatmapAssets } from "./beatmap_assets";
+
+const PREVIEW_FALLBACK_RATIO = 0.42;
+const HITSOUND_LOOKAHEAD_MS = 100;
+const RESYNC_THRESHOLD_MS = 30;
+const HIT_WINDOW_MS = 20;
 
 type PlayerEventMap = {
     timeupdate: [time: number, duration: number];
@@ -40,6 +47,8 @@ export interface IPlayerOptions {
     playfield_scale?: number;
     auto_resize?: boolean;
     enable_fps_counter?: boolean;
+    time_smoothing?: number;
+    max_frame_delta?: number;
 }
 
 export class BeatmapPlayer {
@@ -60,10 +69,11 @@ export class BeatmapPlayer {
     private renderer_config: IRendererConfig;
     private start_offset: number;
     private volume: number;
+    private background_url: string | null = null;
 
     private listeners: Map<PlayerEvent, Set<Function>> = new Map();
-    private _raw_osu_content: string = "";
-    private _is_loaded: boolean = false;
+    private raw_osu_content: string = "";
+    private is_loaded_flag: boolean = false;
 
     private next_hit_object_index: number = 0;
 
@@ -76,6 +86,12 @@ export class BeatmapPlayer {
     private fps_frame_count = 0;
     private fps_last_update = 0;
     private current_fps = 0;
+    private time_smoothing = 0.1;
+    private smoothed_delta = 0;
+    private max_frame_delta = 100;
+
+    private last_timestamp: number = 0;
+    private smooth_time: number = 0;
 
     constructor(options: IPlayerOptions) {
         this.options = options;
@@ -111,6 +127,16 @@ export class BeatmapPlayer {
 
         this.enable_fps_counter = options.enable_fps_counter ?? false;
         this.fps_last_update = performance.now();
+
+        const time_smoothing = options.time_smoothing;
+        if (Number.isFinite(time_smoothing)) {
+            this.time_smoothing = Math.max(0, Math.min(1, time_smoothing as number));
+        }
+
+        const max_frame_delta = options.max_frame_delta;
+        if (Number.isFinite(max_frame_delta)) {
+            this.max_frame_delta = Math.max(10, max_frame_delta as number);
+        }
     }
 
     // load from .osz ArrayBuffer
@@ -136,7 +162,7 @@ export class BeatmapPlayer {
             // store raw content for preview time extraction
             for (const [name, content] of files) {
                 if (name.endsWith(".osu")) {
-                    this._raw_osu_content = typeof content === "string" ? content : new TextDecoder().decode(content);
+                    this.raw_osu_content = typeof content === "string" ? content : new TextDecoder().decode(content);
                     break;
                 }
             }
@@ -180,7 +206,7 @@ export class BeatmapPlayer {
         try {
             const parser = get_shared_parser();
             const beatmap = await parser.parse(content);
-            this._raw_osu_content = content;
+            this.raw_osu_content = content;
             return this.load_beatmap(beatmap, audio);
         } catch (e) {
             const reason = e instanceof Error ? e.message : String(e);
@@ -194,8 +220,24 @@ export class BeatmapPlayer {
             return err(ErrorCode.NotLoaded, "No resources loaded");
         }
 
-        const { beatmap, audio, video, video_offset } = this.resources;
+        const { beatmap } = this.resources;
         const speed = get_speed_multiplier(this.mods);
+        const assets = new BeatmapAssets(this.resources).resolve();
+
+        if (!this.resources.audio && assets.audio) {
+            this.resources.audio = assets.audio;
+        }
+        if (!this.resources.background && assets.background) {
+            this.resources.background = assets.background;
+        }
+        if (!this.resources.video && assets.video) {
+            this.resources.video = assets.video;
+        }
+        if (!this.resources.video_offset && assets.video_offset) {
+            this.resources.video_offset = assets.video_offset;
+        }
+
+        const { audio, video, video_offset } = this.resources;
 
         // setup audio
         if (audio) {
@@ -225,10 +267,10 @@ export class BeatmapPlayer {
         }
 
         // determine start time from preview point
-        if (this.start_offset < 0 && this._raw_osu_content) {
+        if (this.start_offset < 0 && this.raw_osu_content) {
             const parser = get_shared_parser();
-            const preview = await parser.extract_preview_time(this._raw_osu_content);
-            this.start_offset = preview > 0 ? preview : this.get_last_object_time() * 0.42;
+            const preview = await parser.extract_preview_time(this.raw_osu_content);
+            this.start_offset = preview > 0 ? preview : this.get_last_object_time() * PREVIEW_FALLBACK_RATIO;
         }
         if (this.start_offset < 0) {
             this.start_offset = 0;
@@ -237,32 +279,37 @@ export class BeatmapPlayer {
         // ensure start index is correct
         this.update_hit_index(this.start_offset);
 
-        if (this.resources?.background) {
-            try {
-                const img = new Image();
-                img.src = URL.createObjectURL(this.resources.background);
-                await img.decode();
-                this.renderer.set_background({
-                    source: img,
-                    width: img.width,
-                    height: img.height
-                });
+        await this.load_background();
+        await wait_for_fonts_ready();
 
-                // ensure we are ready to draw
-                this._is_loaded = true;
-                requestAnimationFrame(() => this.render_frame(this.start_offset));
-            } catch (e) {
-                console.warn("[BeatmapPlayer] Failed to load background", e);
-            }
-        }
-
-        this._is_loaded = true;
+        this.is_loaded_flag = true;
         this.emit("loaded", beatmap, this.resources);
-
-        // final render call to be sure
         requestAnimationFrame(() => this.render_frame(this.start_offset));
 
         return ok(this.resources);
+    }
+
+    private async load_background(): Promise<void> {
+        if (!this.resources?.background || !this.renderer) {
+            return;
+        }
+
+        try {
+            const img = new Image();
+            if (this.background_url) {
+                URL.revokeObjectURL(this.background_url);
+            }
+            this.background_url = URL.createObjectURL(this.resources.background);
+            img.src = this.background_url;
+            await img.decode();
+            this.renderer.set_background({
+                source: img,
+                width: img.width,
+                height: img.height
+            });
+        } catch (e) {
+            console.warn("[BeatmapPlayer] Failed to load background", e);
+        }
     }
 
     private create_renderer(beatmap: IBeatmap): BaseRenderer {
@@ -279,13 +326,15 @@ export class BeatmapPlayer {
     }
 
     private get_last_object_time(): number {
-        if (!this.resources?.beatmap.objects.length) return 0;
+        if (!this.resources?.beatmap.objects.length) {
+            return 0;
+        }
         const objects = this.resources.beatmap.objects;
         return objects[objects.length - 1].end_time;
     }
 
     async play(): Promise<void> {
-        if (!this.renderer || !this._is_loaded) {
+        if (!this.renderer || !this.is_loaded_flag) {
             console.warn("[BeatmapPlayer] Cannot play: not loaded");
             return;
         }
@@ -307,7 +356,9 @@ export class BeatmapPlayer {
     }
 
     pause(): void {
-        if (!this.audio.is_playing) return;
+        if (!this.audio.is_playing) {
+            return;
+        }
 
         // save current position for resume
         this.start_offset = this.audio.current_time;
@@ -327,7 +378,7 @@ export class BeatmapPlayer {
         this.audio.set_speed(speed);
         this.video?.set_speed(speed);
 
-        if (this._is_loaded) {
+        if (this.is_loaded_flag) {
             requestAnimationFrame(() => this.render_frame(this.current_time));
         }
     }
@@ -367,7 +418,7 @@ export class BeatmapPlayer {
             if (selected_file) {
                 const content = this.resources.files.get(selected_file);
                 if (content) {
-                    this._raw_osu_content = typeof content === "string" ? content : new TextDecoder().decode(content);
+                    this.raw_osu_content = typeof content === "string" ? content : new TextDecoder().decode(content);
                 }
             }
 
@@ -386,7 +437,9 @@ export class BeatmapPlayer {
     }
 
     private update_hit_index(time: number): void {
-        if (!this.resources?.beatmap) return;
+        if (!this.resources?.beatmap) {
+            return;
+        }
 
         const objects = this.resources.beatmap.objects;
 
@@ -415,8 +468,12 @@ export class BeatmapPlayer {
         this.audio.dispose();
         this.hitsounds.dispose();
         this.video?.dispose();
-        this.renderer?.dispose(); // Ensure renderer is disposed
-        this.listeners.clear();
+        this.renderer?.dispose();
+
+        if (this.background_url) {
+            URL.revokeObjectURL(this.background_url);
+            this.background_url = null;
+        }
 
         if (this.resize_observer) {
             this.resize_observer.disconnect();
@@ -434,7 +491,7 @@ export class BeatmapPlayer {
 
         this.renderer = null;
         this.resources = null;
-        this._is_loaded = false;
+        this.is_loaded_flag = false;
         this.listeners.clear();
     }
 
@@ -452,11 +509,13 @@ export class BeatmapPlayer {
     }
 
     get is_loaded(): boolean {
-        return this._is_loaded;
+        return this.is_loaded_flag;
     }
 
     get mode(): string {
-        if (!this.resources) return "standard";
+        if (!this.resources) {
+            return "standard";
+        }
         switch (this.resources.beatmap.mode) {
             case 1:
                 return "taiko";
@@ -489,7 +548,7 @@ export class BeatmapPlayer {
         this.backend.resize(width, height);
         this.calculate_layout(width, height, playfield_scale);
 
-        if (this._is_loaded) {
+        if (this.is_loaded_flag) {
             requestAnimationFrame(() => this.render_frame(this.current_time));
         }
     }
@@ -498,7 +557,7 @@ export class BeatmapPlayer {
         this.renderer_config = { ...this.renderer_config, ...config };
         this.renderer?.update_config(this.renderer_config);
 
-        if (this._is_loaded) {
+        if (this.is_loaded_flag) {
             requestAnimationFrame(() => this.render_frame(this.current_time));
         }
     }
@@ -507,7 +566,7 @@ export class BeatmapPlayer {
         this.skin = merge_skin(skin);
 
         // renderer needs to be recreated with new skin
-        if (this._is_loaded && this.resources?.beatmap) {
+        if (this.is_loaded_flag && this.resources?.beatmap) {
             this.renderer = this.create_renderer(this.resources.beatmap);
             this.renderer.initialize(this.resources.beatmap);
             requestAnimationFrame(() => this.render_frame(this.current_time));
@@ -529,8 +588,14 @@ export class BeatmapPlayer {
     }
 
     toggle_pause(): void {
-        if (!this._is_loaded) return;
-        this.is_playing ? this.pause() : this.play();
+        if (!this.is_loaded_flag) {
+            return;
+        }
+        if (this.is_playing) {
+            this.pause();
+        } else {
+            this.play();
+        }
     }
 
     toggle_grid(): void {
@@ -547,8 +612,8 @@ export class BeatmapPlayer {
         const target_height = 384;
 
         let fill = 0.9;
-        if (typeof playfield_scale === "number") {
-            fill = playfield_scale;
+        if (Number.isFinite(playfield_scale)) {
+            fill = playfield_scale as number;
         }
 
         // calculate scale based on the smaller dimension to fit playfield
@@ -593,14 +658,14 @@ export class BeatmapPlayer {
         }
     }
 
-    private last_timestamp: number = 0;
-    private smooth_time: number = 0;
-
     private start_render_loop(): void {
-        if (this.animation_frame !== null) return;
+        if (this.animation_frame !== null) {
+            return;
+        }
 
         this.last_timestamp = performance.now();
         this.smooth_time = this.audio.current_time;
+        this.smoothed_delta = 0;
 
         const loop = (timestamp: number) => {
             if (!this.audio.is_playing) {
@@ -609,8 +674,18 @@ export class BeatmapPlayer {
             }
 
             // calculate smooth time
-            const delta = timestamp - this.last_timestamp;
+            const raw_delta = Math.max(0, timestamp - this.last_timestamp);
             this.last_timestamp = timestamp;
+
+            let delta = Math.min(raw_delta, this.max_frame_delta);
+            if (this.time_smoothing > 0) {
+                if (this.smoothed_delta === 0) {
+                    this.smoothed_delta = delta;
+                } else {
+                    this.smoothed_delta += (delta - this.smoothed_delta) * this.time_smoothing;
+                }
+                delta = this.smoothed_delta;
+            }
 
             // advance smooth time by delta * speed
             this.smooth_time += delta * this.audio.speed_multiplier;
@@ -620,7 +695,7 @@ export class BeatmapPlayer {
             const actual_audio_time = this.audio.current_time;
             const deviation = Math.abs(this.smooth_time - actual_audio_time);
 
-            if (deviation > 30) {
+            if (deviation > RESYNC_THRESHOLD_MS) {
                 this.smooth_time = actual_audio_time;
             } else {
                 // slowly nudge smooth_time towards actual_audio_time to prevent drift
@@ -630,7 +705,7 @@ export class BeatmapPlayer {
             const time = this.smooth_time;
 
             // process hitsounds
-            this.schedule_hitsounds();
+            this.schedule_hitsounds(time);
 
             this.render_frame(time);
             this.video?.sync(time);
@@ -649,20 +724,20 @@ export class BeatmapPlayer {
         this.animation_frame = requestAnimationFrame(loop);
     }
 
-    private schedule_hitsounds(): void {
-        if (!this.resources?.beatmap || !this.audio.is_playing) return;
+    private schedule_hitsounds(time: number): void {
+        if (!this.resources?.beatmap || !this.audio.is_playing) {
+            return;
+        }
 
         const objects = this.resources.beatmap.objects;
-        const current_time = this.audio.current_time;
-        const lookahead = 100;
-        const schedule_window = current_time + lookahead;
+        const schedule_window = time + HITSOUND_LOOKAHEAD_MS;
 
         while (this.next_hit_object_index < objects.length && objects[this.next_hit_object_index].time <= schedule_window) {
             const obj = objects[this.next_hit_object_index];
 
             // only play if it hasn't passed by too much
             // but we rely on update_hit_index to skip old ones on seek
-            if (obj.time >= current_time - 20) {
+            if (obj.time >= time - HIT_WINDOW_MS) {
                 this.play_hitsound(obj);
             }
 
@@ -696,14 +771,22 @@ export class BeatmapPlayer {
                 addition_set = sample.addition_set;
             }
 
-            if (sample.index !== 0) index = sample.index;
-            if (sample.volume !== 0) volume = sample.volume;
+            if (sample.index !== 0) {
+                index = sample.index;
+            }
+            if (sample.volume !== 0) {
+                volume = sample.volume;
+            }
             custom_filename = sample.filename;
         }
 
         // fallbacks for Auto values
-        if (normal_set === SampleSet.Auto) normal_set = SampleSet.Normal;
-        if (addition_set === SampleSet.Auto) addition_set = normal_set;
+        if (normal_set === SampleSet.Auto) {
+            normal_set = SampleSet.Normal;
+        }
+        if (addition_set === SampleSet.Auto) {
+            addition_set = normal_set;
+        }
 
         // calculate exact AudioContext time for this object
         const when = this.audio.get_host_time(obj.time);
@@ -711,12 +794,14 @@ export class BeatmapPlayer {
         this.hitsounds.play(normal_set, addition_set, obj.hit_sound, index, volume, custom_filename, when);
     }
 
-    private get_timing_point(time: number): any {
+    private get_timing_point(time: number): ITimingPoint {
         const points = this.resources?.beatmap.timing_points ?? [];
         for (let i = points.length - 1; i >= 0; i--) {
-            if (points[i].time <= time) return points[i];
+            if (points[i].time <= time) {
+                return points[i];
+            }
         }
-        return points[0]; // fallback
+        return points[0];
     }
 
     private stop_render_loop(): void {

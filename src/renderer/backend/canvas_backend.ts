@@ -5,6 +5,7 @@ export class CanvasBackend implements IRenderBackend {
     private _width: number = 0;
     private _height: number = 0;
     private _dpr: number = 1;
+    private is_initialized = false;
 
     get width(): number {
         return this._width;
@@ -19,8 +20,7 @@ export class CanvasBackend implements IRenderBackend {
         const display_width = container.clientWidth || container.width;
         const display_height = container.clientHeight || container.height;
 
-        container.width = display_width * this._dpr;
-        container.height = display_height * this._dpr;
+        this.apply_canvas_size(container, display_width, display_height);
 
         const ctx = container.getContext("2d", {
             alpha: true,
@@ -35,12 +35,14 @@ export class CanvasBackend implements IRenderBackend {
         this._width = display_width;
         this._height = display_height;
 
-        ctx.scale(this._dpr, this._dpr);
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = "high";
+        this.configure_context();
+        this.is_initialized = true;
     }
 
     clear(): void {
+        if (!this.is_initialized) {
+            return;
+        }
         this.ctx.save();
         this.ctx.setTransform(this._dpr, 0, 0, this._dpr, 0, 0);
         this.ctx.clearRect(0, 0, this._width, this._height);
@@ -52,20 +54,17 @@ export class CanvasBackend implements IRenderBackend {
     }
 
     resize(width: number, height: number): void {
+        if (!this.is_initialized) {
+            return;
+        }
         this._width = width;
         this._height = height;
         this._dpr = window.devicePixelRatio || 1;
 
         const canvas = this.ctx.canvas;
-        canvas.width = width * this._dpr;
-        canvas.height = height * this._dpr;
-        canvas.style.width = `${width}px`;
-        canvas.style.height = `${height}px`;
-
-        this.ctx.resetTransform();
-        this.ctx.scale(this._dpr, this._dpr);
-        this.ctx.imageSmoothingEnabled = true;
-        this.ctx.imageSmoothingQuality = "high";
+        this.apply_canvas_size(canvas, width, height);
+        this.reset_transform();
+        this.configure_context();
     }
 
     draw_circle(x: number, y: number, radius: number, fill_color: string, stroke_color?: string, stroke_width?: number): void {
@@ -138,6 +137,15 @@ export class CanvasBackend implements IRenderBackend {
         ctx.fillText(text, x, y);
     }
 
+    measure_text(text: string, font: string): TextMetrics | null {
+        const ctx = this.ctx;
+        const prev = ctx.font;
+        ctx.font = font;
+        const metrics = ctx.measureText(text);
+        ctx.font = prev;
+        return metrics;
+    }
+
     begin_path(): void {
         this.ctx.beginPath();
     }
@@ -148,6 +156,17 @@ export class CanvasBackend implements IRenderBackend {
 
     line_to(x: number, y: number): void {
         this.ctx.lineTo(x, y);
+    }
+
+    draw_line(x0: number, y0: number, x1: number, y1: number, color: string, width: number, cap: LineCap = "butt", join: LineJoin = "miter"): void {
+        this.ctx.beginPath();
+        this.ctx.moveTo(x0, y0);
+        this.ctx.lineTo(x1, y1);
+        this.ctx.strokeStyle = color;
+        this.ctx.lineWidth = width;
+        this.ctx.lineCap = cap;
+        this.ctx.lineJoin = join;
+        this.ctx.stroke();
     }
 
     bezier_curve_to(cp1x: number, cp1y: number, cp2x: number, cp2y: number, x: number, y: number): void {
@@ -334,5 +353,26 @@ export class CanvasBackend implements IRenderBackend {
             min_x,
             min_y
         };
+    }
+
+    private apply_canvas_size(canvas: HTMLCanvasElement, width: number, height: number): void {
+        canvas.width = width * this._dpr;
+        canvas.height = height * this._dpr;
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
+    }
+
+    private configure_context(): void {
+        this.ctx.scale(this._dpr, this._dpr);
+        this.ctx.imageSmoothingEnabled = true;
+        this.ctx.imageSmoothingQuality = "high";
+    }
+
+    private reset_transform(): void {
+        if (this.ctx.resetTransform) {
+            this.ctx.resetTransform();
+        } else {
+            this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+        }
     }
 }
