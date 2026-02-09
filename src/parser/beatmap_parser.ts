@@ -1,7 +1,7 @@
 import type { IBeatmap, IHitObject, ICircleData, ISliderData, ISpinnerData, IHoldData, SliderPathType, IBeatmapInfo } from "../types/beatmap";
 import { GameMode, HitObjectType, SampleSet } from "../types/beatmap";
 import {
-    init_wasm_from_url,
+    init_wasm,
     is_wasm_ready,
     parse as wasm_parse,
     get_property as wasm_get_property,
@@ -21,17 +21,6 @@ type wasm_parser_options = {
 let wasm_options: wasm_parser_options | null = null;
 let wasm_init_promise: Promise<void> | null = null;
 const encoder = new TextEncoder();
-const get_default_wasm_url = (): string => {
-    try {
-        return new URL("./browser/osu-parser.browser.js", import.meta.url).toString();
-    } catch {
-        if (typeof window !== "undefined") {
-            return new URL("/browser/osu-parser.browser.js", window.location.origin).toString();
-        }
-    }
-    return "./browser/osu-parser.browser.js";
-};
-
 export const configure_wasm_parser = (options: wasm_parser_options): void => {
     wasm_options = options;
 
@@ -45,8 +34,11 @@ const ensure_wasm_ready = async (): Promise<void> => {
     if (wasm_init_promise) return wasm_init_promise;
 
     const options = wasm_options ?? {};
-    const script_url = options.script_url ?? get_default_wasm_url();
-    wasm_init_promise = init_wasm_from_url(script_url, options.module_config ?? {}, options.global_name);
+    wasm_init_promise = init_wasm({
+        factory: options.factory,
+        module_config: options.module_config ?? {},
+        global_name: options.global_name
+    });
 
     return wasm_init_promise;
 };

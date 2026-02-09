@@ -26,13 +26,13 @@
         "example": "bun run --hot example/server.ts"
     },
     "dependencies": {
-        "jszip": "^3.10.1",
-        "@rel-packages/osu-beatmap-parser": "^1.4.2"
+        "@rel-packages/osu-beatmap-parser": "^1.4.3",
+        "jszip": "^3.10.1"
     },
     "devDependencies": {
         "@types/bun": "^1.1.0",
-        "typescript": "^5.3.0",
-        "prettier": "^3.7.4"
+        "prettier": "^3.7.4",
+        "typescript": "^5.3.0"
     },
     "author": "rel",
     "license": "ISC",
