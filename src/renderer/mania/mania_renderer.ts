@@ -15,8 +15,6 @@ const BASE_SCROLL_SPEED = 20;
 export class ManiaRenderer extends BaseRenderer {
     private key_count: number = 4;
     private scroll_time: number = MAX_TIME_RANGE / BASE_SCROLL_SPEED;
-
-    // overlay constants (configurable)
     private hd_coverage: number = 0.25; // bottom 25% for hidden
     private fi_coverage: number = 0.6; // top 60% for fade-in
     private gradient_ratio: number = 0.2; // fade region is 20% of playfield height

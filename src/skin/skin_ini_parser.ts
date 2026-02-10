@@ -97,6 +97,7 @@ const parse_colours = (colours: SkinIniData["colours"], key: string, value: stri
 
     // combo colors (Combo1-8)
     const combo_match = key.match(/^combo(\d)$/);
+
     if (combo_match) {
         const idx = parseInt(combo_match[1]) - 1;
         while (colours.combo_colors.length <= idx) {

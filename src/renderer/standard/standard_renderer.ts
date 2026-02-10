@@ -215,7 +215,7 @@ export class StandardRenderer extends BaseRenderer {
 
         const fade_duration = Math.min(this.fade_in * 2, this.preempt);
         const fade_progress = clamp((time - appear_time) / fade_duration, 0, 1);
-        const opacity = Easing.OutQuint(fade_progress) * this.skin.approach_circle_opacity;
+        const opacity = fade_progress * this.skin.approach_circle_opacity;
 
         const scale_progress = clamp((time - appear_time) / this.preempt, 0, 1);
         const scale = 4 - 3 * scale_progress;

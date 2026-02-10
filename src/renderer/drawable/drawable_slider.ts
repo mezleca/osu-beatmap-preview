@@ -20,6 +20,7 @@ type TickEntry = {
     tick: SliderTickEvent;
     appear_time: number;
     visible_end: number;
+    preempt: number;
 };
 
 export class DrawableSlider extends Drawable {
@@ -44,9 +45,6 @@ export class DrawableSlider extends Drawable {
     private cached_scale: number = 1;
     private tick_entries: TickEntry[] = [];
     private tick_entries_by_start: TickEntry[] = [];
-    private tick_window_start = 0;
-    private tick_window_end = 0;
-    private tick_window_time = Number.NEGATIVE_INFINITY;
 
     constructor(
         hit_object: RenderHitObject,
@@ -331,41 +329,27 @@ export class DrawableSlider extends Drawable {
         const appear_time = hit_object.time - config.preempt;
 
         const hidden = has_mod(config.mods, Mods.Hidden);
-        const hidden_fade_duration = Math.min(config.preempt - TICK_ANIM_DURATION, 1000);
 
-        if (time < this.tick_window_time) {
-            this.tick_window_start = 0;
-            this.tick_window_end = 0;
-        }
-
-        // keep a moving window so we don't scan every tick every frame
-        while (this.tick_window_end < this.tick_entries_by_start.length && this.tick_entries_by_start[this.tick_window_end].appear_time <= time) {
-            this.tick_window_end++;
-        }
-
-        while (this.tick_window_start < this.tick_window_end && this.tick_entries_by_start[this.tick_window_start].visible_end < time) {
-            this.tick_window_start++;
-        }
-
-        this.tick_window_time = time;
-
-        for (let i = this.tick_window_start; i < this.tick_window_end; i++) {
-            const entry = this.tick_entries_by_start[i];
+        for (const entry of this.tick_entries_by_start) {
             const tick = entry.tick;
 
             // calculate when this tick became visible
             const elapsed_since_appear = time - entry.appear_time;
 
             if (elapsed_since_appear < 0) continue;
+            if (entry.visible_end < time) continue;
 
             // fade in over TICK_ANIM_DURATION
             let tick_alpha = clamp(elapsed_since_appear / TICK_ANIM_DURATION, 0, 1);
 
-            if (hidden && hidden_fade_duration > 0) {
-                const fade_out_start = tick.time - hidden_fade_duration;
-                if (time >= fade_out_start) {
-                    const fade_out_progress = clamp((time - fade_out_start) / hidden_fade_duration, 0, 1);
-                    tick_alpha *= 1 - fade_out_progress;
+            if (hidden && entry.preempt > 0) {
+                const hidden_fade_duration = Math.min(entry.preempt - TICK_ANIM_DURATION, 1000);
+                if (hidden_fade_duration > 0) {
+                    const fade_out_start = tick.time - hidden_fade_duration;
+                    if (time >= fade_out_start) {
+                        const fade_out_progress = clamp((time - fade_out_start) / hidden_fade_duration, 0, 1);
+                        tick_alpha *= 1 - fade_out_progress;
+                    }
                 }
             } else if (time > tick.time) {
                 const fade_out_progress = clamp((time - tick.time) / TICK_ANIM_DURATION, 0, 1);
@@ -395,19 +379,21 @@ export class DrawableSlider extends Drawable {
         const hidden = has_mod(config.mods, Mods.Hidden);
 
         this.tick_entries = this.ticks.map((tick) => {
-            const tick_appear_time = appear_time + tick.path_progress * config.preempt;
+            const span_start_time = hit_object.time + tick.span_index * this.span_duration;
+            const base_preempt = config.preempt;
+            const offset = tick.span_index > 0 ? 200 : base_preempt * 0.66;
+            const time_preempt = (tick.time - span_start_time) / 2 + offset;
+            const tick_appear_time = tick.time - time_preempt;
             const visible_end = hidden ? tick.time : tick.time + TICK_ANIM_DURATION;
             return {
                 tick,
                 appear_time: tick_appear_time,
-                visible_end
+                visible_end,
+                preempt: time_preempt
             };
         });
 
         this.tick_entries_by_start = [...this.tick_entries].sort((a, b) => a.appear_time - b.appear_time);
-        this.tick_window_start = 0;
-        this.tick_window_end = 0;
-        this.tick_window_time = Number.NEGATIVE_INFINITY;
     }
 
     private ease_out_elastic_half(t: number): number {
