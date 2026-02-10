@@ -25,9 +25,9 @@ export class HitsoundController {
 
         for (const [name, buffer] of files) {
             if (name.endsWith(".wav") || name.endsWith(".mp3") || name.endsWith(".ogg")) {
-                if (buffer.byteLength < 128) {
-                    continue;
-                }
+                // skip invalid hitsounds
+                if (buffer.byteLength < 128) continue;
+
                 decode_promises.push(
                     this.context
                         .decodeAudioData(buffer.slice(0))
@@ -35,7 +35,7 @@ export class HitsoundController {
                             const key = name.toLowerCase().replace(/\.(wav|mp3|ogg)$/, "");
                             this.samples.set(key, audio_buffer);
                         })
-                        .catch((err) => {
+                        .catch(() => {
                             failed.push(name);
                         })
                 );

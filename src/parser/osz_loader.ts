@@ -1,7 +1,7 @@
 import JSZip from "jszip";
-import type { IBeatmap, IBeatmapInfo } from "../types/beatmap";
+import type { IBeatmap } from "../types/beatmap";
 import type { IBeatmapResources } from "../types/resources";
-import { AsyncBeatmapParser } from "./async_parser";
+import { init_wasm, parse as wasm_parse } from "@rel-packages/osu-beatmap-parser/dist/lib/wasm-wrapper.js";
 
 export interface IOszLoaderOptions {
     // select difficulty by index or version name
@@ -9,10 +9,8 @@ export interface IOszLoaderOptions {
 }
 
 export class OszLoader {
-    private parser = new AsyncBeatmapParser();
-
-    // load from .osz archive (ArrayBuffer)
     async load_osz(data: ArrayBuffer, options?: IOszLoaderOptions): Promise<IBeatmapResources> {
+        await init_wasm();
         const zip = await JSZip.loadAsync(data);
         const files = new Map<string, ArrayBuffer>();
 
@@ -25,8 +23,8 @@ export class OszLoader {
         return this.load_from_files(files, options);
     }
 
-    // load from pre-extracted files (for direct file access without .osz)
     async load_from_files(files: Map<string, ArrayBuffer | string>, options?: IOszLoaderOptions): Promise<IBeatmapResources> {
+        await init_wasm();
         // find all .osu files
         const osu_files = [...files.keys()].filter((f) => f.toLowerCase().endsWith(".osu"));
 
@@ -34,12 +32,13 @@ export class OszLoader {
             throw new Error("No .osu files found in beatmap");
         }
 
-        // list all difficulties (async via worker)
+        // parse difficulties
         const available_difficulties = await Promise.all(
             osu_files.map(async (file) => {
                 const content = files.get(file)!;
                 const data = this.to_bytes(content);
-                return this.parser.parse_info(data, file);
+                const beatmap = wasm_parse(data) as IBeatmap;
+                return { filename: file, beatmap };
             })
         );
 
@@ -49,7 +48,7 @@ export class OszLoader {
         const osu_bytes = this.to_bytes(osu_content);
 
         // parse full beatmap (async via worker)
-        const beatmap = await this.parser.parse(osu_bytes);
+        const beatmap = wasm_parse(osu_bytes) as IBeatmap;
 
         const audio_filename = beatmap.General.AudioFilename || null;
         const background_filename = beatmap.Events.background?.filename || null;
@@ -68,12 +67,14 @@ export class OszLoader {
 
         // extract audio
         let audio: ArrayBuffer | undefined;
+
         if (audio_filename) {
             audio = this.find_file(array_buffer_files, audio_filename);
         }
 
         // extract background
         let background: Blob | undefined;
+
         if (background_filename) {
             const bg_data = this.find_file(array_buffer_files, background_filename);
             if (bg_data) {
@@ -83,6 +84,7 @@ export class OszLoader {
 
         // extract video
         let video: Blob | undefined;
+
         if (video_filename) {
             const video_data = this.find_file(array_buffer_files, video_filename);
             if (video_data) {
@@ -104,7 +106,6 @@ export class OszLoader {
         };
     }
 
-    // list available difficulties in a beatmap set
     async list_difficulties(data: ArrayBuffer): Promise<string[]> {
         const zip = await JSZip.loadAsync(data);
         const osu_files: string[] = [];
@@ -126,7 +127,7 @@ export class OszLoader {
         return difficulties;
     }
 
-    private select_difficulty(osu_files: string[], difficulties: IBeatmapInfo[], selector?: number | string): string {
+    private select_difficulty(osu_files: string[], difficulties: { filename: string; beatmap: IBeatmap }[], selector?: number | string): string {
         // no selector: use first file
         if (selector === undefined) {
             return osu_files[0];
@@ -141,7 +142,7 @@ export class OszLoader {
         }
 
         // string: search by version name
-        const exact_match = difficulties.find((diff) => diff.version === selector);
+        const exact_match = difficulties.find((diff) => diff.beatmap.Metadata.Version === selector);
         if (exact_match) {
             return exact_match.filename;
         }
@@ -149,7 +150,7 @@ export class OszLoader {
         // fallback: partial match against filename or version
         const lower_selector = selector.toLowerCase();
         const partial_match = difficulties.find(
-            (diff) => diff.filename.toLowerCase().includes(lower_selector) || diff.version.toLowerCase().includes(lower_selector)
+            (diff) => diff.filename.toLowerCase().includes(lower_selector) || diff.beatmap.Metadata.Version.toLowerCase().includes(lower_selector)
         );
         if (partial_match) {
             return partial_match.filename;

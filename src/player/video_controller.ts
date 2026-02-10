@@ -2,7 +2,6 @@ export class VideoController {
     private video: HTMLVideoElement | null = null;
     private object_url: string | null = null;
     private _offset: number = 0;
-    private speed: number = 1;
 
     get element(): HTMLVideoElement | null {
         return this.video;
@@ -12,11 +11,10 @@ export class VideoController {
         return this._offset;
     }
 
-    async load(data: Blob, offset: number = 0, speed: number = 1): Promise<void> {
+    async load(data: Blob, offset: number = 0): Promise<void> {
         this.dispose();
 
         this._offset = offset;
-        this.speed = speed;
 
         this.video = document.createElement("video");
         this.video.muted = true;
@@ -27,12 +25,13 @@ export class VideoController {
         this.video.src = this.object_url;
 
         await new Promise<void>((resolve, reject) => {
-            if (!this.video) return reject(new Error("No video element"));
+            if (!this.video) {
+                return reject(new Error("No video element"));
+            }
+
             this.video.onloadeddata = () => resolve();
             this.video.onerror = () => reject(new Error("Failed to load video"));
         });
-
-        this.video.playbackRate = speed;
     }
 
     sync(audio_time_ms: number): void {
@@ -75,13 +74,6 @@ export class VideoController {
 
         const video_time = Math.max(0, (time_ms - this._offset) / 1000);
         this.video.currentTime = video_time;
-    }
-
-    set_speed(speed: number): void {
-        this.speed = speed;
-        if (this.video) {
-            this.video.playbackRate = speed;
-        }
     }
 
     dispose(): void {

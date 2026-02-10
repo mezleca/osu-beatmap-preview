@@ -3,17 +3,6 @@ export { BeatmapPlayer, type IPlayerOptions } from "./player/player";
 export { AudioController } from "./player/audio_controller";
 export { VideoController } from "./player/video_controller";
 
-// parser
-export {
-    BeatmapParser,
-    extract_preview_time,
-    extract_audio_filename,
-    extract_background_filename,
-    extract_video_info,
-    configure_wasm_parser,
-    init_wasm_parser,
-    get_wasm_ready
-} from "./parser/beatmap_parser";
 export { OszLoader, type IOszLoaderOptions } from "./parser/osz_loader";
 
 // types

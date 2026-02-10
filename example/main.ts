@@ -102,9 +102,9 @@ let setup_player_events = (p: BeatmapPlayer) => {
             diff_select.innerHTML = "";
             for (const diff of resources.available_difficulties) {
                 const opt = document.createElement("option");
-                opt.value = diff.version;
-                opt.textContent = diff.version;
-                opt.selected = diff.version === beatmap.Metadata.Version;
+                opt.value = diff.beatmap.Metadata.Version;
+                opt.textContent = diff.beatmap.Metadata.Version;
+                opt.selected = diff.beatmap.Metadata.Version === beatmap.Metadata.Version;
                 diff_select.appendChild(opt);
             }
         } else {

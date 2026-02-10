@@ -41,6 +41,7 @@ export class BeatmapAssets {
         }
 
         const lower = filename.toLowerCase();
+
         for (const [name, data] of this.files) {
             if (name.toLowerCase() === lower) {
                 return data;

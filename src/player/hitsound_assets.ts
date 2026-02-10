@@ -9,6 +9,7 @@ export const load_default_hitsounds = async (base_url: string): Promise<Map<stri
 
     try {
         const response = await fetch(`${base_url}/manifest.json`);
+
         if (response.ok) {
             const data = await response.json();
             if (Array.isArray(data)) {
@@ -21,13 +22,16 @@ export const load_default_hitsounds = async (base_url: string): Promise<Map<stri
         return files;
     }
 
+    // fetch all hitsounds from manifest
     await Promise.all(
         manifest.map(async (name) => {
             try {
                 const response = await fetch(`${base_url}/${name}`);
+
                 if (!response.ok) {
                     return;
                 }
+
                 const buffer = await response.arrayBuffer();
                 files.set(name, buffer);
             } catch {}

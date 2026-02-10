@@ -1,3 +1,4 @@
+import { clamp } from "@/math/vector2";
 import { get_speed_multiplier } from "../types/mods";
 
 export class AudioController {
@@ -135,8 +136,8 @@ export class AudioController {
                 this.audio_source.onended = null;
                 this.audio_source.stop();
                 this.audio_source.disconnect();
-            } catch {
-                // ignore errors
+            } catch (err) {
+                console.error("[AudioController]", err as string);
             }
             this.audio_source = null;
         }
@@ -144,7 +145,7 @@ export class AudioController {
 
     set_volume(volume: number): void {
         if (this.gain_node) {
-            this.gain_node.gain.value = Math.max(0, Math.min(1, volume));
+            this.gain_node.gain.value = clamp(volume, 0, 1);
         }
     }
 

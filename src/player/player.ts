@@ -1,10 +1,10 @@
-import type { IBeatmap, IHitObject, IBeatmapInfo, ITimingPoint, IHitSample } from "../types/beatmap";
+import type { IBeatmap, IHitObject, ITimingPoint, IHitSample } from "../types/beatmap";
 import { GameMode, SampleSet, HitObjectType } from "../types/beatmap";
 import type { IBeatmapResources } from "../types/resources";
 import { type Result, ErrorCode, ok, err } from "../types/result";
 import { get_speed_multiplier } from "../types/mods";
 import { OszLoader } from "../parser/osz_loader";
-import { get_shared_parser } from "../parser/async_parser";
+import { init_wasm, parse as wasm_parse } from "@rel-packages/osu-beatmap-parser/dist/lib/wasm-wrapper.js";
 import { BaseRenderer, DEFAULT_RENDERER_CONFIG, type IRendererConfig } from "../renderer/base_renderer";
 import type { IRenderBackend } from "../renderer/backend/render_backend";
 import { CanvasBackend } from "../renderer/backend/canvas_backend";
@@ -241,8 +241,8 @@ export class BeatmapPlayer {
 
     async load_osu_content(content: string, audio?: ArrayBuffer): Promise<Result<IBeatmapResources>> {
         try {
-            const parser = get_shared_parser();
-            const beatmap = await parser.parse(content);
+            await init_wasm();
+            const beatmap = this.parse_content(content);
             this.raw_osu_content = content;
             return this.load_beatmap(beatmap, audio);
         } catch (e) {
@@ -260,10 +260,10 @@ export class BeatmapPlayer {
         video_offset?: number
     ): Promise<Result<IBeatmapResources>> {
         try {
-            const parser = get_shared_parser();
+            await init_wasm();
             const is_string = typeof osu_content === "string";
             const bytes = osu_content instanceof Uint8Array ? osu_content : osu_content instanceof ArrayBuffer ? new Uint8Array(osu_content) : null;
-            const beatmap = await parser.parse(is_string ? osu_content : (bytes as Uint8Array));
+            const beatmap = this.parse_content(is_string ? osu_content : (bytes as Uint8Array));
 
             if (is_string) {
                 this.raw_osu_content = osu_content;
@@ -306,7 +306,7 @@ export class BeatmapPlayer {
         // setup video
         if (video) {
             this.video = new VideoController();
-            await this.video.load(video, video_offset ?? 0, speed);
+            await this.video.load(video, video_offset ?? 0);
         }
 
         // create renderer based on mode
@@ -321,9 +321,8 @@ export class BeatmapPlayer {
         }
 
         // determine start time from preview point
-        if (this.start_offset < 0 && this.raw_osu_content) {
-            const parser = get_shared_parser();
-            const preview = await parser.extract_preview_time(this.raw_osu_content);
+        if (this.start_offset < 0) {
+            const preview = beatmap.General.PreviewTime;
             // preview time can be missing; fallback to a mid-map point for a nicer default
             this.start_offset = preview > 0 ? preview : this.get_last_object_time() * PREVIEW_FALLBACK_RATIO;
         }
@@ -473,7 +472,6 @@ export class BeatmapPlayer {
 
         this.renderer?.set_mods(mods);
         this.audio.set_speed(speed);
-        this.video?.set_speed(speed);
 
         if (this.is_loaded_flag) {
             requestAnimationFrame(() => this.render_frame(this.current_time));
@@ -511,7 +509,9 @@ export class BeatmapPlayer {
             this.resources = result;
 
             // update raw content for preview time extraction
-            const selected_file = this.resources.available_difficulties.find((d) => d.version === this.resources!.beatmap.Metadata.Version)?.filename;
+            const selected_file = this.resources.available_difficulties.find(
+                (d) => d.beatmap.Metadata.Version === this.resources!.beatmap.Metadata.Version
+            )?.filename;
             if (selected_file) {
                 const content = this.resources.files.get(selected_file);
                 if (content) {
@@ -549,6 +549,11 @@ export class BeatmapPlayer {
         while (this.next_hit_object_index < objects.length && objects[this.next_hit_object_index].time < time) {
             this.next_hit_object_index++;
         }
+    }
+
+    private parse_content(content: string | Uint8Array): IBeatmap {
+        const data = typeof content == "string" ? new TextEncoder().encode(content) : content;
+        return wasm_parse(data) as IBeatmap;
     }
 
     stop(): void {
@@ -629,7 +634,7 @@ export class BeatmapPlayer {
         return this.resources?.beatmap ?? null;
     }
 
-    get available_difficulties(): IBeatmapInfo[] {
+    get available_difficulties(): { filename: string; beatmap: IBeatmap }[] {
         return this.resources?.available_difficulties ?? [];
     }
 
