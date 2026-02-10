@@ -25,7 +25,7 @@ export { StandardRenderer } from "./renderer/standard/standard_renderer";
 export { ManiaRenderer } from "./renderer/mania/mania_renderer";
 
 // fonts
-export { load_default_fonts, wait_for_fonts_ready } from "./fonts";
+export { load_default_fonts } from "./fonts";
 
 // math
 export {

@@ -14,7 +14,6 @@ import { AudioController } from "./audio_controller";
 import { VideoController } from "./video_controller";
 import { HitsoundController } from "./hitsound_controller";
 import { type ISkinConfig, merge_skin } from "../skin/skin_config";
-import { wait_for_fonts_ready } from "../fonts";
 import { BeatmapAssets } from "./beatmap_assets";
 import { process_timing_points } from "../beatmap/timing";
 import { load_default_hitsounds } from "./hitsound_assets";
@@ -334,7 +333,6 @@ export class BeatmapPlayer {
         this.update_hit_index(this.start_offset);
 
         await this.load_background();
-        await wait_for_fonts_ready();
 
         this.is_loaded_flag = true;
         this.emit("loaded", beatmap, this.resources);

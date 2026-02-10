@@ -131,7 +131,7 @@ export const DEFAULT_SKIN: ISkinConfig = {
     mania_lane_spacing: 1,
     mania_lane_colors: MANIA_KEY_COLORS,
 
-    font_family: '"Kozuka Gothic Pro B", "Kozuka Gothic Pro R", "Aller", "Exo 2", sans-serif',
+    font_family: '"Kozuka Gothic Pro B", sans-serif',
     hit_animation_duration: 240,
     hit_animation_scale: 1.2,
 
