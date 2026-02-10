@@ -12,14 +12,14 @@ export interface ISkinConfig {
     approach_circle_use_combo_color: boolean;
     approach_circle_color?: string;
 
-    // hit glow effect
-    enable_glow: boolean;
-    glow_color?: string;
-    glow_use_combo_color: boolean;
-    glow_opacity: number;
-
-    // hit explode/flash effect (after hit)
-    enable_hit_explode: boolean;
+    // hitburst effect
+    enable_hitburst: boolean;
+    hitburst_duration: number;
+    hitburst_scale: number;
+    hitburst_glow_enabled: boolean;
+    hitburst_glow_color?: string;
+    hitburst_glow_use_combo_color: boolean;
+    hitburst_glow_opacity: number;
 
     // slider rendering
     slider_body_opacity: number;
@@ -94,11 +94,12 @@ export const DEFAULT_SKIN: ISkinConfig = {
     approach_circle_opacity: 0.5,
     approach_circle_use_combo_color: true,
 
-    enable_glow: false,
-    glow_use_combo_color: true,
-    glow_opacity: 0.3,
-
-    enable_hit_explode: true,
+    enable_hitburst: true,
+    hitburst_duration: 180,
+    hitburst_scale: 1.2,
+    hitburst_glow_enabled: false,
+    hitburst_glow_use_combo_color: true,
+    hitburst_glow_opacity: 0.3,
 
     slider_body_opacity: 0.9,
     slider_border_opacity: 1.0,
