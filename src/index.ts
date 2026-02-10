@@ -26,17 +26,3 @@ export { ManiaRenderer } from "./renderer/mania/mania_renderer";
 
 // fonts
 export { load_default_fonts } from "./fonts";
-
-// math
-export {
-    calculate_preempt,
-    calculate_fade_in,
-    calculate_radius,
-    difficulty_range,
-    inverse_difficulty_range,
-    type IDifficultyRange,
-    PREEMPT_RANGE,
-    PREEMPT_MIN
-} from "./math/difficulty";
-export { flatten_bezier, flatten_linear, flatten_perfect, flatten_catmull } from "./math/curves";
-export * from "./math/vector2";
