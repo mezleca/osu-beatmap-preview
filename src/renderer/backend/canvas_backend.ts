@@ -53,6 +53,10 @@ export class CanvasBackend implements IRenderBackend {
         // no-op for canvas
     }
 
+    begin_frame(): void {}
+
+    end_frame(): void {}
+
     resize(width: number, height: number): void {
         if (!this.is_initialized) {
             return;

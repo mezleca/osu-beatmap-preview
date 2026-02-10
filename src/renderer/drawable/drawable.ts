@@ -1,5 +1,5 @@
 import type { IRenderBackend } from "../backend/render_backend";
-import type { IHitObject } from "../../types/beatmap";
+import type { RenderHitObject } from "../render_types";
 import type { ISkinConfig } from "../../skin/skin_config";
 import { TransformSequence, Easing } from "./transforms";
 
@@ -23,7 +23,7 @@ export abstract class Drawable {
     protected backend: IRenderBackend;
     protected skin: ISkinConfig;
 
-    protected hit_object: IHitObject;
+    protected hit_object: RenderHitObject;
     protected config: DrawableConfig;
 
     protected alpha = 1;
@@ -38,7 +38,7 @@ export abstract class Drawable {
     protected life_time_start = 0;
     protected life_time_end = 0;
 
-    constructor(hit_object: IHitObject, config: DrawableConfig) {
+    constructor(hit_object: RenderHitObject, config: DrawableConfig) {
         this.hit_object = hit_object;
         this.config = config;
         this.backend = config.backend;
@@ -74,6 +74,7 @@ export abstract class Drawable {
     protected update_state(time: number): void {
         if (this.armed_state === ArmedState.Idle && time >= this.hit_object.time) {
             this.armed_state = ArmedState.Hit;
+            // first crossing of hit time, useful for one-shot effects
             this.on_hit(time);
         }
     }

@@ -110,10 +110,6 @@ export const flatten_perfect = (points: Vec2[], distance: number): Vec2[] => {
     if (ccw && arc_angle < 0) arc_angle += 2 * Math.PI;
     if (!ccw && arc_angle > 0) arc_angle -= 2 * Math.PI;
 
-    if (Math.abs(arc_angle) > Math.PI) {
-        return flatten_bezier(points);
-    }
-
     const arc_length = Math.abs(arc_angle) * radius;
 
     // match osu! arc approximation (max error ~= 0.1)

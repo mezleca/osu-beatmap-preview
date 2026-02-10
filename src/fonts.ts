@@ -10,23 +10,20 @@ export const wait_for_fonts_ready = async (): Promise<void> => {
 export const load_default_fonts = async (base_url: string = "/assets/fonts"): Promise<void> => {
     if (!has_font_api()) return;
 
-    const fonts: FontFace[] = [];
+    const create_font = (family: string, url: string, weight: string): FontFace | null => {
+        try {
+            return new FontFace(family, `url(${url})`, { weight, style: "normal" });
+        } catch {
+            return null;
+        }
+    };
 
-    try {
-        fonts.push(new FontFace("Aller", `url(${base_url}/Aller-Regular.ttf)`, { weight: "400", style: "normal" }));
-    } catch {}
-
-    try {
-        fonts.push(new FontFace("Aller", `url(${base_url}/Aller-Bold.ttf)`, { weight: "600", style: "normal" }));
-    } catch {}
-
-    try {
-        fonts.push(new FontFace("Kozuka Gothic Pro R", `url(${base_url}/KozGoProRegular.otf)`, { weight: "400", style: "normal" }));
-    } catch {}
-
-    try {
-        fonts.push(new FontFace("Kozuka Gothic Pro B", `url(${base_url}/KozGoProBold.otf)`, { weight: "600", style: "normal" }));
-    } catch {}
+    const fonts = [
+        create_font("Aller", `${base_url}/Aller-Regular.ttf`, "400"),
+        create_font("Aller", `${base_url}/Aller-Bold.ttf`, "600"),
+        create_font("Kozuka Gothic Pro R", `${base_url}/KozGoProRegular.otf`, "400"),
+        create_font("Kozuka Gothic Pro B", `${base_url}/KozGoProBold.otf`, "600")
+    ].filter((font): font is FontFace => font !== null);
 
     if (fonts.length === 0) return;
 

@@ -1,4 +1,4 @@
-import type { IHitObject } from "../../types/beatmap";
+import type { RenderHitObject } from "../render_types";
 import type { IRenderBackend } from "../backend/render_backend";
 import type { ISkinConfig } from "../../skin/skin_config";
 import { Mods, has_mod } from "../../types/mods";
@@ -50,7 +50,7 @@ export class FollowPointRenderer {
         this.radius = radius;
     }
 
-    build(objects: IHitObject[]): void {
+    build(objects: RenderHitObject[]): void {
         this.points = [];
         this.lines = [];
 

@@ -1,8 +1,8 @@
-import type { ISliderData } from "../../types/beatmap";
+import type { RenderSliderData } from "../render_types";
 import { flatten_bezier, flatten_linear, flatten_perfect, flatten_catmull } from "../../math/curves";
 import { vec2_len, vec2_sub, vec2_lerp, type Vec2 } from "../../math/vector2";
 
-export const compute_slider_path = (slider: ISliderData): Vec2[] => {
+export const compute_slider_path = (slider: RenderSliderData): Vec2[] => {
     let points: Vec2[];
 
     if (slider.path_type === "L") {
@@ -26,7 +26,7 @@ export const compute_slider_path = (slider: ISliderData): Vec2[] => {
     return clamp_path_to_distance(points, slider.distance);
 };
 
-export const get_slider_end_position = (slider: ISliderData): Vec2 => {
+export const get_slider_end_position = (slider: RenderSliderData): Vec2 => {
     if (!slider.computed_path || slider.computed_path.length === 0) return slider.pos;
     return slider.repetitions % 2 === 0 ? slider.pos : slider.computed_path[slider.computed_path.length - 1];
 };

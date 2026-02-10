@@ -1,3 +1,5 @@
+import type { OsuFileFormat, HitObject, TimingPoint, HitSample, CurvePoint } from "@rel-packages/osu-beatmap-parser/dist/types/types";
+
 // game modes
 export enum GameMode {
     Standard = 0,
@@ -6,32 +8,11 @@ export enum GameMode {
     Mania = 3
 }
 
-export interface IBeatmap {
-    format_version: number;
-    mode: GameMode;
-
-    title: string;
-    title_unicode: string;
-    artist: string;
-    artist_unicode: string;
-    creator: string;
-    version: string;
-
-    ar: number;
-    cs: number;
-    od: number;
-    hp: number;
-    sv: number;
-    tick_rate: number;
-
-    timing_points: ITimingPoint[];
-    objects: IHitObject[];
-
-    circle_count: number;
-    slider_count: number;
-    spinner_count: number;
-    hold_count: number;
-}
+export type IBeatmap = OsuFileFormat;
+export type IHitObject = HitObject;
+export type ITimingPoint = TimingPoint;
+export type IHitSample = HitSample;
+export type ICurvePoint = CurvePoint;
 
 export interface IBeatmapInfo {
     filename: string;
@@ -52,18 +33,6 @@ export enum SampleSet {
     Drum = 3
 }
 
-export interface ITimingPoint {
-    time: number;
-    ms_per_beat: number;
-    change: boolean;
-    sample_set: SampleSet;
-    sample_index: number;
-    volume: number;
-    kiai: boolean;
-    velocity: number;
-    beat_length: number;
-}
-
 export const HitObjectType = {
     Circle: 1 << 0,
     Slider: 1 << 1,
@@ -79,55 +48,6 @@ export const HitSoundType = {
     Finish: 1 << 2,
     Clap: 1 << 3
 } as const;
-
-export interface IHitSample {
-    normal_set: SampleSet;
-    addition_set: SampleSet;
-    index: number;
-    volume: number;
-    filename?: string;
-}
-
-export interface IHitObject {
-    time: number;
-    type: number;
-
-    hit_sound: number;
-    hit_sample?: IHitSample;
-    edge_sounds?: number[];
-    edge_sets?: [SampleSet, SampleSet][];
-
-    end_time: number;
-    end_pos: [number, number];
-    combo_number: number;
-    combo_count: number;
-    data: ICircleData | ISliderData | ISpinnerData | IHoldData;
-}
-
-export interface ICircleData {
-    pos: [number, number];
-}
-
-export type SliderPathType = "L" | "B" | "P" | "C";
-
-export interface ISliderData {
-    pos: [number, number];
-    path_type: SliderPathType;
-    control_points: [number, number][];
-    distance: number;
-    repetitions: number;
-    duration?: number;
-    computed_path?: [number, number][];
-}
-
-export interface ISpinnerData {
-    end_time: number;
-}
-
-export interface IHoldData {
-    pos: [number, number];
-    end_time: number;
-}
 
 export const is_circle = (obj: IHitObject): boolean => (obj.type & HitObjectType.Circle) !== 0;
 export const is_slider = (obj: IHitObject): boolean => (obj.type & HitObjectType.Slider) !== 0;

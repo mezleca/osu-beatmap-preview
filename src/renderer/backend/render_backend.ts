@@ -48,6 +48,8 @@ export interface IRenderBackend {
     resize(width: number, height: number): void;
     clear(): void;
     dispose(): void;
+    begin_frame?(): void;
+    end_frame?(): void;
 
     get width(): number;
     get height(): number;

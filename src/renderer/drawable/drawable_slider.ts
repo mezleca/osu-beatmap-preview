@@ -1,4 +1,4 @@
-import type { IHitObject, ISliderData } from "../../types/beatmap";
+import type { RenderHitObject, RenderSliderData } from "../render_types";
 import type { RenderImage } from "../backend/render_backend";
 import { Drawable, type DrawableConfig } from "./drawable";
 import { CircleVisual } from "./circle_visual";
@@ -13,9 +13,17 @@ const ARROW_SCALE_AMOUNT = 1.3;
 const ARROW_MOVE_OUT_DURATION = 35;
 const ARROW_MOVE_IN_DURATION = 250;
 const ARROW_TOTAL_CYCLE = 300;
+const TICK_ANIM_DURATION = 150;
+const TICK_SCALE_DURATION = TICK_ANIM_DURATION * 4;
+
+type TickEntry = {
+    tick: SliderTickEvent;
+    appear_time: number;
+    visible_end: number;
+};
 
 export class DrawableSlider extends Drawable {
-    private slider_data: ISliderData;
+    private slider_data: RenderSliderData;
     private position_path: Vec2[];
     private render_path: Vec2[];
     private path_length: number;
@@ -34,9 +42,14 @@ export class DrawableSlider extends Drawable {
     private min_distance_from_end: number;
     private cached_texture: RenderImage | null = null;
     private cached_scale: number = 1;
+    private tick_entries: TickEntry[] = [];
+    private tick_entries_by_start: TickEntry[] = [];
+    private tick_window_start = 0;
+    private tick_window_end = 0;
+    private tick_window_time = Number.NEGATIVE_INFINITY;
 
     constructor(
-        hit_object: IHitObject,
+        hit_object: RenderHitObject,
         config: DrawableConfig,
         path: Vec2[],
         span_duration: number,
@@ -44,7 +57,7 @@ export class DrawableSlider extends Drawable {
         min_distance_from_end: number
     ) {
         super(hit_object, config);
-        this.slider_data = hit_object.data as ISliderData;
+        this.slider_data = hit_object.data as RenderSliderData;
         const resample_step = Math.max(1, config.radius * 0.05);
         this.position_path = path;
         this.render_path = this.resample_path(path, resample_step);
@@ -73,6 +86,7 @@ export class DrawableSlider extends Drawable {
             return;
         }
 
+        // ticks/repeats are derived in slider space so render timing is stable across mods
         const result = generate_slider_events({
             start_time: hit_object.time,
             span_duration,
@@ -85,6 +99,7 @@ export class DrawableSlider extends Drawable {
 
         this.ticks = result.ticks;
         this.repeats = result.repeats;
+        this.build_tick_entries();
     }
     private calculate_path_length(): number {
         let length = 0;
@@ -259,6 +274,30 @@ export class DrawableSlider extends Drawable {
     private render_body(time: number): void {
         if (this.body_alpha <= 0.01 || this.render_path.length < 2) return;
 
+        const { backend } = this;
+        this.prepare_body_cache();
+
+        if (this.cached_texture && this.cached_texture.min_x !== undefined && this.cached_texture.min_y !== undefined) {
+            const scale = this.cached_scale;
+            backend.set_alpha(this.body_alpha);
+            backend.draw_image(
+                this.cached_texture,
+                this.cached_texture.min_x,
+                this.cached_texture.min_y,
+                this.cached_texture.width / scale,
+                this.cached_texture.height / scale
+            );
+            backend.set_alpha(1);
+        }
+
+        this.render_ticks(time);
+    }
+
+    prepare_body_cache(): void {
+        if (this.render_path.length < 2) {
+            return;
+        }
+
         const { backend, skin, config } = this;
         const { radius } = config;
 
@@ -280,51 +319,47 @@ export class DrawableSlider extends Drawable {
             );
             this.cached_scale = render_scale;
         }
-
-        if (this.cached_texture && this.cached_texture.min_x !== undefined && this.cached_texture.min_y !== undefined) {
-            const scale = this.cached_scale;
-            backend.set_alpha(this.body_alpha);
-            backend.draw_image(
-                this.cached_texture,
-                this.cached_texture.min_x,
-                this.cached_texture.min_y,
-                this.cached_texture.width / scale,
-                this.cached_texture.height / scale
-            );
-            backend.set_alpha(1);
-        }
-
-        this.render_ticks(time);
     }
 
     private render_ticks(time: number): void {
-        if (this.ticks.length === 0) return;
+        if (this.tick_entries_by_start.length === 0) return;
 
         const { backend, config, hit_object } = this;
         const { radius } = config;
 
         const base_tick_radius = radius * 0.12;
         const appear_time = hit_object.time - config.preempt;
-        const snake_progress = clamp((time - appear_time) / config.preempt, 0, 1);
-
-        const ANIM_DURATION = 150;
-        const SCALE_DURATION = ANIM_DURATION * 4;
 
         const hidden = has_mod(config.mods, Mods.Hidden);
-        const hidden_fade_duration = Math.min(config.preempt - ANIM_DURATION, 1000);
+        const hidden_fade_duration = Math.min(config.preempt - TICK_ANIM_DURATION, 1000);
 
-        for (const tick of this.ticks) {
-            // tick not yet visible (snaking)
-            if (snake_progress < tick.path_progress) continue;
+        if (time < this.tick_window_time) {
+            this.tick_window_start = 0;
+            this.tick_window_end = 0;
+        }
+
+        // keep a moving window so we don't scan every tick every frame
+        while (this.tick_window_end < this.tick_entries_by_start.length && this.tick_entries_by_start[this.tick_window_end].appear_time <= time) {
+            this.tick_window_end++;
+        }
+
+        while (this.tick_window_start < this.tick_window_end && this.tick_entries_by_start[this.tick_window_start].visible_end < time) {
+            this.tick_window_start++;
+        }
+
+        this.tick_window_time = time;
+
+        for (let i = this.tick_window_start; i < this.tick_window_end; i++) {
+            const entry = this.tick_entries_by_start[i];
+            const tick = entry.tick;
 
             // calculate when this tick became visible
-            const tick_appear_time = appear_time + tick.path_progress * config.preempt;
-            const elapsed_since_appear = time - tick_appear_time;
+            const elapsed_since_appear = time - entry.appear_time;
 
             if (elapsed_since_appear < 0) continue;
 
-            // fade in over ANIM_DURATION (150ms)
-            let tick_alpha = clamp(elapsed_since_appear / ANIM_DURATION, 0, 1);
+            // fade in over TICK_ANIM_DURATION
+            let tick_alpha = clamp(elapsed_since_appear / TICK_ANIM_DURATION, 0, 1);
 
             if (hidden && hidden_fade_duration > 0) {
                 const fade_out_start = tick.time - hidden_fade_duration;
@@ -333,14 +368,14 @@ export class DrawableSlider extends Drawable {
                     tick_alpha *= 1 - fade_out_progress;
                 }
             } else if (time > tick.time) {
-                const fade_out_progress = clamp((time - tick.time) / ANIM_DURATION, 0, 1);
+                const fade_out_progress = clamp((time - tick.time) / TICK_ANIM_DURATION, 0, 1);
                 tick_alpha *= 1 - fade_out_progress;
             }
 
             tick_alpha *= this.body_alpha;
 
-            // scale from 0.5 to 1.0 over SCALE_DURATION with elastic out
-            const scale_progress = clamp(elapsed_since_appear / SCALE_DURATION, 0, 1);
+            // scale from 0.5 to 1.0 over TICK_SCALE_DURATION with elastic out
+            const scale_progress = clamp(elapsed_since_appear / TICK_SCALE_DURATION, 0, 1);
             const elastic_value = this.ease_out_elastic_half(scale_progress);
             const tick_scale = 0.5 + 0.5 * elastic_value;
             const tick_radius = base_tick_radius * tick_scale;
@@ -352,6 +387,27 @@ export class DrawableSlider extends Drawable {
         }
 
         backend.set_alpha(1);
+    }
+
+    private build_tick_entries(): void {
+        const { hit_object, config } = this;
+        const appear_time = hit_object.time - config.preempt;
+        const hidden = has_mod(config.mods, Mods.Hidden);
+
+        this.tick_entries = this.ticks.map((tick) => {
+            const tick_appear_time = appear_time + tick.path_progress * config.preempt;
+            const visible_end = hidden ? tick.time : tick.time + TICK_ANIM_DURATION;
+            return {
+                tick,
+                appear_time: tick_appear_time,
+                visible_end
+            };
+        });
+
+        this.tick_entries_by_start = [...this.tick_entries].sort((a, b) => a.appear_time - b.appear_time);
+        this.tick_window_start = 0;
+        this.tick_window_end = 0;
+        this.tick_window_time = Number.NEGATIVE_INFINITY;
     }
 
     private ease_out_elastic_half(t: number): number {

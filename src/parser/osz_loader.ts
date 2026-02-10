@@ -1,5 +1,5 @@
 import JSZip from "jszip";
-import type { IBeatmap } from "../types/beatmap";
+import type { IBeatmap, IBeatmapInfo } from "../types/beatmap";
 import type { IBeatmapResources } from "../types/resources";
 import { AsyncBeatmapParser } from "./async_parser";
 
@@ -16,7 +16,6 @@ export class OszLoader {
         const zip = await JSZip.loadAsync(data);
         const files = new Map<string, ArrayBuffer>();
 
-        // extract all files into memory
         for (const [name, file] of Object.entries(zip.files)) {
             if (!file.dir) {
                 files.set(name, await file.async("arraybuffer"));
@@ -45,19 +44,17 @@ export class OszLoader {
         );
 
         // select difficulty
-        const selected_file = this.select_difficulty(osu_files, files, options?.difficulty);
+        const selected_file = this.select_difficulty(osu_files, available_difficulties, options?.difficulty);
         const osu_content = files.get(selected_file)!;
         const osu_bytes = this.to_bytes(osu_content);
 
         // parse full beatmap (async via worker)
         const beatmap = await this.parser.parse(osu_bytes);
 
-        // extract resource info (async via worker)
-        const [audio_filename, background_filename, video_info] = await Promise.all([
-            this.parser.extract_audio_filename(osu_bytes),
-            this.parser.extract_background_filename(osu_bytes),
-            this.parser.extract_video_info(osu_bytes)
-        ]);
+        const audio_filename = beatmap.General.AudioFilename || null;
+        const background_filename = beatmap.Events.background?.filename || null;
+        const video_filename = beatmap.Events.video?.filename || null;
+        const video_offset = beatmap.Events.video?.startTime ?? 0;
 
         // convert files map to ArrayBuffer only
         const array_buffer_files = new Map<string, ArrayBuffer>();
@@ -86,12 +83,10 @@ export class OszLoader {
 
         // extract video
         let video: Blob | undefined;
-        let video_offset: number | undefined;
-        if (video_info) {
-            const video_data = this.find_file(array_buffer_files, video_info.filename);
+        if (video_filename) {
+            const video_data = this.find_file(array_buffer_files, video_filename);
             if (video_data) {
                 video = new Blob([video_data]);
-                video_offset = video_info.offset;
             }
         }
 
@@ -104,8 +99,8 @@ export class OszLoader {
             video,
             audio_filename: audio_filename ?? undefined,
             background_filename: background_filename ?? undefined,
-            video_filename: video_info?.filename,
-            video_offset
+            video_filename: video_filename ?? undefined,
+            video_offset: video_filename ? video_offset : undefined
         };
     }
 
@@ -131,7 +126,7 @@ export class OszLoader {
         return difficulties;
     }
 
-    private select_difficulty(osu_files: string[], files: Map<string, ArrayBuffer | string>, selector?: number | string): string {
+    private select_difficulty(osu_files: string[], difficulties: IBeatmapInfo[], selector?: number | string): string {
         // no selector: use first file
         if (selector === undefined) {
             return osu_files[0];
@@ -146,19 +141,18 @@ export class OszLoader {
         }
 
         // string: search by version name
-        for (const file of osu_files) {
-            const content = this.to_string(files.get(file)!);
-            const version_match = content.match(/Version:\s*(.+)/);
-            if (version_match && version_match[1].trim() === selector) {
-                return file;
-            }
+        const exact_match = difficulties.find((diff) => diff.version === selector);
+        if (exact_match) {
+            return exact_match.filename;
         }
 
-        // fallback: partial match
-        for (const file of osu_files) {
-            if (file.toLowerCase().includes(selector.toLowerCase())) {
-                return file;
-            }
+        // fallback: partial match against filename or version
+        const lower_selector = selector.toLowerCase();
+        const partial_match = difficulties.find(
+            (diff) => diff.filename.toLowerCase().includes(lower_selector) || diff.version.toLowerCase().includes(lower_selector)
+        );
+        if (partial_match) {
+            return partial_match.filename;
         }
 
         throw new Error(`Difficulty "${selector}" not found`);
@@ -179,11 +173,6 @@ export class OszLoader {
         }
 
         return undefined;
-    }
-
-    private to_string(data: ArrayBuffer | string): string {
-        if (typeof data === "string") return data;
-        return new TextDecoder().decode(data);
     }
 
     private to_bytes(data: ArrayBuffer | string): Uint8Array {

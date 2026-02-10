@@ -21,9 +21,13 @@ export class HitsoundController {
         this.samples.clear();
 
         const decode_promises: Promise<void>[] = [];
+        const failed: string[] = [];
 
         for (const [name, buffer] of files) {
             if (name.endsWith(".wav") || name.endsWith(".mp3") || name.endsWith(".ogg")) {
+                if (buffer.byteLength < 128) {
+                    continue;
+                }
                 decode_promises.push(
                     this.context
                         .decodeAudioData(buffer.slice(0))
@@ -32,13 +36,21 @@ export class HitsoundController {
                             this.samples.set(key, audio_buffer);
                         })
                         .catch((err) => {
-                            console.warn(`[HitsoundController] Failed to decode ${name}:`, err);
+                            failed.push(name);
                         })
                 );
             }
         }
 
         await Promise.all(decode_promises);
+
+        if (failed.length > 0) {
+            console.warn(`[HitsoundController] Failed to decode ${failed.length} hitsounds`);
+        }
+    }
+
+    clear(): void {
+        this.samples.clear();
     }
 
     play(
@@ -69,6 +81,11 @@ export class HitsoundController {
         if (hit_sound & HitSoundType.Clap) {
             this.play_sound(addition_name, "hitclap", index, volume, when);
         }
+    }
+
+    play_sample(set: SampleSet, sample_name: string, index: number, volume: number = 100, when: number = 0): void {
+        const set_name = this.get_set_name(set);
+        this.play_sound(set_name, sample_name, index, volume, when);
     }
 
     private play_sound(set: string, type: string, index: number, volume: number, when: number): void {

@@ -1,4 +1,4 @@
-import type { IBeatmap, IHitObject, ISliderData, ITimingPoint } from "../../types/beatmap";
+import type { IBeatmap, ITimingPoint } from "../../types/beatmap";
 import { is_circle, is_slider, is_spinner, is_new_combo } from "../../types/beatmap";
 import { Mods, has_mod } from "../../types/mods";
 import { calculate_preempt, calculate_fade_in, calculate_radius } from "../../math/difficulty";
@@ -13,7 +13,10 @@ import { Easing } from "../drawable/transforms";
 import { FollowPointRenderer } from "./follow_points";
 import { compute_slider_path, get_slider_end_position } from "./slider_path";
 import { calculate_slider_duration, calculate_tick_spacing } from "./slider_math";
-import { process_timing_points, TimingStateResolver } from "./timing_state";
+import { TimingStateResolver } from "./timing_state";
+import { process_timing_points } from "../../beatmap/timing";
+import type { RenderHitObject, RenderSliderData } from "../render_types";
+import { build_render_objects } from "../render_objects";
 
 const flip_y = (y: number): number => 384 - y;
 
@@ -35,11 +38,12 @@ export class StandardRenderer extends BaseRenderer {
 
     initialize(beatmap: IBeatmap): void {
         this.beatmap = beatmap;
-        this.objects = JSON.parse(JSON.stringify(beatmap.objects)).sort((a: IHitObject, b: IHitObject) => a.time - b.time);
-        this.timing_points = process_timing_points([...beatmap.timing_points]);
+        this.objects = build_render_objects(beatmap).sort((a: RenderHitObject, b: RenderHitObject) => a.time - b.time);
+        this.timing_points = process_timing_points([...beatmap.TimingPoints]);
         this.timing_resolver = new TimingStateResolver(this.timing_points);
 
-        const difficulty = get_adjusted_difficulty(beatmap.cs, beatmap.ar, 0, 0, this.mods);
+        const ar = beatmap.Difficulty.ApproachRate >= 0 ? beatmap.Difficulty.ApproachRate : beatmap.Difficulty.OverallDifficulty;
+        const difficulty = get_adjusted_difficulty(beatmap.Difficulty.CircleSize, ar, 0, 0, this.mods);
         this.radius = calculate_radius(difficulty.cs);
         this.preempt = calculate_preempt(difficulty.ar);
         this.fade_in = calculate_fade_in(this.preempt);
@@ -79,7 +83,7 @@ export class StandardRenderer extends BaseRenderer {
             obj.combo_count = combo_count;
 
             if (is_slider(obj)) {
-                const data = obj.data as ISliderData;
+                const data = obj.data as RenderSliderData;
 
                 if (has_mod(this.mods, Mods.HardRock)) {
                     data.pos = [data.pos[0], flip_y(data.pos[1])];
@@ -127,7 +131,7 @@ export class StandardRenderer extends BaseRenderer {
             if (is_circle(obj)) {
                 this.drawables.push(new DrawableHitCircle(obj, this.drawable_config));
             } else if (is_slider(obj)) {
-                const data = obj.data as ISliderData;
+                const data = obj.data as RenderSliderData;
                 const path = data.computed_path || [];
                 const span_duration = data.duration || 0;
 
@@ -197,6 +201,14 @@ export class StandardRenderer extends BaseRenderer {
         backend.restore();
     }
 
+    precompute(): void {
+        for (const drawable of this.drawables) {
+            if (drawable instanceof DrawableSlider) {
+                drawable.prepare_body_cache();
+            }
+        }
+    }
+
     private draw_approach_circle(drawable: Drawable, time: number): void {
         const pos = drawable.position;
         const appear_time = drawable.start_time - this.preempt;
@@ -234,7 +246,7 @@ export class StandardRenderer extends BaseRenderer {
         return alpha;
     }
 
-    private draw_spinner(obj: IHitObject, time: number): void {
+    private draw_spinner(obj: RenderHitObject, time: number): void {
         const appear_time = obj.time - this.preempt;
         let opacity = clamp((time - appear_time) / this.fade_in, 0, 1);
 

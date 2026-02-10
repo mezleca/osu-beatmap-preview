@@ -46,7 +46,7 @@ const update_progress = (time: number, duration: number) => {
 
 const resolve_mode = (beatmap: IBeatmap | null): "standard" | "taiko" | "catch" | "mania" => {
     if (!beatmap) return "standard";
-    switch (beatmap.mode) {
+    switch (beatmap.General.Mode) {
         case GameMode.Taiko:
             return "taiko";
         case GameMode.Catch:
@@ -82,8 +82,9 @@ resize_observer.observe(drop_zone);
 
 let setup_player_events = (p: BeatmapPlayer) => {
     p.on("loaded", (beatmap: IBeatmap, resources: IBeatmapResources) => {
-        title_el.textContent = `${beatmap.artist} - ${beatmap.title}`;
-        subtitle_el.textContent = `[${beatmap.version}] AR${beatmap.ar.toFixed(1)} CS${beatmap.cs.toFixed(1)}`;
+        const ar = beatmap.Difficulty.ApproachRate >= 0 ? beatmap.Difficulty.ApproachRate : beatmap.Difficulty.OverallDifficulty;
+        title_el.textContent = `${beatmap.Metadata.Artist} - ${beatmap.Metadata.Title}`;
+        subtitle_el.textContent = `[${beatmap.Metadata.Version}] AR${ar.toFixed(1)} CS${beatmap.Difficulty.CircleSize.toFixed(1)}`;
         play_btn.disabled = false;
         stop_btn.disabled = false;
 
@@ -93,6 +94,7 @@ let setup_player_events = (p: BeatmapPlayer) => {
             player.set_mods(active_mods);
         }
         update_progress(player?.current_time ?? 0, player?.duration ?? 0);
+        player?.load_hitsounds();
 
         // populate difficulty selector
         if (resources.available_difficulties.length > 1) {
@@ -102,7 +104,7 @@ let setup_player_events = (p: BeatmapPlayer) => {
                 const opt = document.createElement("option");
                 opt.value = diff.version;
                 opt.textContent = diff.version;
-                opt.selected = diff.version === beatmap.version;
+                opt.selected = diff.version === beatmap.Metadata.Version;
                 diff_select.appendChild(opt);
             }
         } else {
@@ -139,6 +141,8 @@ const load_beatmap = async (data: ArrayBuffer, filename: string) => {
         canvas,
         mods: active_mods,
         volume: 0.5,
+        hitsound_volume: 0.25,
+        audio_offset: 20,
         playfield_scale: 0.9,
         auto_resize: true,
         enable_fps_counter: true

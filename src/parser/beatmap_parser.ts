@@ -1,5 +1,5 @@
-import type { IBeatmap, IHitObject, ICircleData, ISliderData, ISpinnerData, IHoldData, SliderPathType, IBeatmapInfo } from "../types/beatmap";
-import { GameMode, HitObjectType, SampleSet } from "../types/beatmap";
+import type { IBeatmap, IBeatmapInfo } from "../types/beatmap";
+import { GameMode } from "../types/beatmap";
 import {
     init_wasm,
     is_wasm_ready,
@@ -59,149 +59,6 @@ const assert_wasm_ready = (): void => {
 const to_bytes = (content: string): Uint8Array => encoder.encode(content);
 const to_data = (content: string | Uint8Array): Uint8Array => (typeof content === "string" ? to_bytes(content) : content);
 
-const parse_hit_sample = (sample: { normalSet: number; additionSet: number; index: number; volume: number; filename: string }) => {
-    return {
-        normal_set: sample.normalSet as SampleSet,
-        addition_set: sample.additionSet as SampleSet,
-        index: sample.index,
-        volume: sample.volume,
-        filename: sample.filename || undefined
-    };
-};
-
-const build_timing_points = (file: OsuFileFormat) => {
-    const result = [] as IBeatmap["timing_points"];
-    const timing_points = [...file.TimingPoints].sort((a, b) => {
-        if (a.time !== b.time) return a.time - b.time;
-        return b.uninherited - a.uninherited;
-    });
-    let current_beat_length = 500;
-    const first_red = timing_points.find((tp) => tp.uninherited === 1 && tp.beatLength > 0);
-    if (first_red && first_red.beatLength > 0) {
-        current_beat_length = first_red.beatLength;
-    }
-
-    for (const tp of timing_points) {
-        const ms_per_beat = tp.beatLength;
-        const is_inherited = tp.uninherited === 0 || ms_per_beat < 0;
-
-        if (!is_inherited && ms_per_beat > 0) {
-            current_beat_length = ms_per_beat;
-        }
-
-        result.push({
-            time: tp.time,
-            ms_per_beat,
-            change: !is_inherited,
-            sample_set: tp.sampleSet as SampleSet,
-            sample_index: tp.sampleIndex,
-            volume: tp.volume,
-            kiai: (tp.effects & 1) !== 0,
-            velocity: is_inherited ? -100 / ms_per_beat : 1.0,
-            beat_length: current_beat_length
-        });
-    }
-
-    return result;
-};
-
-const build_hit_objects = (file: OsuFileFormat): IHitObject[] => {
-    const objects: IHitObject[] = [];
-
-    for (const ho of file.HitObjects) {
-        const obj: IHitObject = {
-            time: ho.time,
-            type: ho.type,
-            hit_sound: ho.hitSound,
-            end_time: ho.endTime || ho.time,
-            end_pos: [ho.x, ho.y],
-            combo_number: 0,
-            combo_count: 0,
-            data: { pos: [ho.x, ho.y] } as ICircleData
-        };
-
-        if (ho.hitSample) {
-            obj.hit_sample = parse_hit_sample(ho.hitSample);
-        }
-
-        if (ho.edgeSounds?.length) {
-            obj.edge_sounds = [...ho.edgeSounds];
-        }
-
-        if (ho.edgeSets?.length) {
-            obj.edge_sets = ho.edgeSets.map((set) => [set.normalSet as SampleSet, set.additionSet as SampleSet]);
-        }
-
-        if (ho.type & HitObjectType.Circle) {
-            obj.data = { pos: [ho.x, ho.y] } as ICircleData;
-        } else if (ho.type & HitObjectType.Slider) {
-            const slider_data: ISliderData = {
-                pos: [ho.x, ho.y],
-                path_type: (ho.curveType || "L") as SliderPathType,
-                control_points: ho.curvePoints.map((p) => [p.x, p.y] as [number, number]),
-                repetitions: ho.slides || 1,
-                distance: ho.length || 0
-            };
-
-            obj.data = slider_data;
-        } else if (ho.type & HitObjectType.Spinner) {
-            const end_time = ho.endTime || ho.time;
-            obj.data = { end_time } as ISpinnerData;
-            obj.end_time = end_time;
-            obj.end_pos = [256, 192];
-        } else if (ho.type & HitObjectType.Hold) {
-            const end_time = ho.endTime || ho.time;
-            obj.data = { pos: [ho.x, ho.y], end_time } as IHoldData;
-            obj.end_time = end_time;
-        }
-
-        objects.push(obj);
-    }
-
-    return objects;
-};
-
-const build_beatmap = (file: OsuFileFormat): IBeatmap => {
-    const beatmap: IBeatmap = {
-        format_version: file.version,
-        mode: file.General.Mode as GameMode,
-        title: file.Metadata.Title,
-        title_unicode: file.Metadata.TitleUnicode,
-        artist: file.Metadata.Artist,
-        artist_unicode: file.Metadata.ArtistUnicode,
-        creator: file.Metadata.Creator,
-        version: file.Metadata.Version,
-        ar: file.Difficulty.ApproachRate,
-        cs: file.Difficulty.CircleSize,
-        od: file.Difficulty.OverallDifficulty,
-        hp: file.Difficulty.HPDrainRate,
-        sv: file.Difficulty.SliderMultiplier,
-        tick_rate: file.Difficulty.SliderTickRate,
-        timing_points: [],
-        objects: [],
-        circle_count: 0,
-        slider_count: 0,
-        spinner_count: 0,
-        hold_count: 0
-    };
-
-    beatmap.timing_points = build_timing_points(file);
-    beatmap.objects = build_hit_objects(file);
-
-    for (const obj of beatmap.objects) {
-        if (obj.type & HitObjectType.Circle) beatmap.circle_count++;
-        else if (obj.type & HitObjectType.Slider) beatmap.slider_count++;
-        else if (obj.type & HitObjectType.Spinner) beatmap.spinner_count++;
-        else if (obj.type & HitObjectType.Hold) beatmap.hold_count++;
-    }
-
-    if (beatmap.ar === -1) {
-        beatmap.ar = beatmap.od;
-    }
-
-    return beatmap;
-};
-
 const parse_video_info = (lines: string[]): { filename: string; offset: number } | null => {
     for (const line of lines) {
         const parts = line.split(",");
@@ -224,8 +81,8 @@ export class BeatmapParser {
     parse(content: string | Uint8Array): IBeatmap {
         assert_wasm_ready();
         const data = to_data(content);
-        const file = wasm_parse(data);
-        return build_beatmap(file);
+        const file = wasm_parse(data) as OsuFileFormat;
+        return file;
     }
 
     parse_info(content: string | Uint8Array, filename: string): IBeatmapInfo {

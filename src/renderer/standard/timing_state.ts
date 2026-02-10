@@ -6,18 +6,6 @@ export type TimingState = {
     sv_multiplier: number;
 };
 
-export const process_timing_points = (points: ITimingPoint[]): ITimingPoint[] => {
-    if (points.length === 0) {
-        return points;
-    }
-
-    return points.sort((a, b) => {
-        if (a.time !== b.time) return a.time - b.time;
-        if (a.change === b.change) return 0;
-        return a.change ? -1 : 1;
-    });
-};
-
 export class TimingStateResolver {
     private points: ITimingPoint[];
     private index = 0;
@@ -27,8 +15,8 @@ export class TimingStateResolver {
 
     constructor(points: ITimingPoint[]) {
         this.points = points;
-        if (points.length > 0 && points[0].change && points[0].ms_per_beat > 0) {
-            this.base_beat_length = points[0].ms_per_beat;
+        if (points.length > 0 && points[0].uninherited === 1 && points[0].beatLength > 0) {
+            this.base_beat_length = points[0].beatLength;
         }
     }
 
@@ -52,12 +40,15 @@ export class TimingStateResolver {
             const point = this.points[i];
             if (point.time > time) break;
 
-            if (point.change && point.ms_per_beat > 0) {
-                this.base_beat_length = point.ms_per_beat;
+            if (point.uninherited === 1 && point.beatLength > 0) {
+                // red line: updates base beat length and resets sv multiplier
+                this.base_beat_length = point.beatLength;
                 this.sv_multiplier = 1;
-            } else if (!point.change) {
-                if (point.velocity > 0) {
-                    this.sv_multiplier = point.velocity;
+            } else if (point.uninherited === 0 && point.beatLength < 0) {
+                // green line: negative beatLength encodes slider velocity
+                const velocity = -100 / point.beatLength;
+                if (velocity > 0) {
+                    this.sv_multiplier = velocity;
                 }
             }
 

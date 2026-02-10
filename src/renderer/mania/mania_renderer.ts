@@ -1,4 +1,4 @@
-import type { IBeatmap, IHitObject, IHoldData } from "../../types/beatmap";
+import type { IBeatmap } from "../../types/beatmap";
 import { is_hold } from "../../types/beatmap";
 import { Mods, has_mod } from "../../types/mods";
 import { get_rate_multiplier } from "../../mods";
@@ -6,6 +6,8 @@ import { BaseRenderer, type IRendererConfig, DEFAULT_RENDERER_CONFIG, PLAYFIELD_
 import type { IRenderBackend } from "../backend/render_backend";
 import type { ISkinConfig } from "../../skin/skin_config";
 import { get_mania_lane_color } from "../../skin/skin_config";
+import type { RenderHitObject, RenderHoldData } from "../render_types";
+import { build_render_objects } from "../render_objects";
 
 const MAX_TIME_RANGE = 11485;
 const BASE_SCROLL_SPEED = 20;
@@ -26,14 +28,8 @@ export class ManiaRenderer extends BaseRenderer {
 
     initialize(beatmap: IBeatmap): void {
         this.beatmap = beatmap;
-        this.objects = [...beatmap.objects];
-        this.key_count = Math.floor(beatmap.cs);
-
-        for (const obj of this.objects) {
-            if (is_hold(obj)) {
-                obj.end_time = (obj.data as IHoldData).end_time;
-            }
-        }
+        this.objects = build_render_objects(beatmap);
+        this.key_count = Math.floor(beatmap.Difficulty.CircleSize);
     }
 
     set_mods(mods: number): void {
@@ -131,7 +127,7 @@ export class ManiaRenderer extends BaseRenderer {
         backend.restore();
     }
 
-    private get_lane(obj: IHitObject): number {
+    private get_lane(obj: RenderHitObject): number {
         const pos = (obj.data as { pos: [number, number] }).pos;
         let lane = Math.floor((pos[0] * this.key_count) / 512);
 
@@ -142,7 +138,7 @@ export class ManiaRenderer extends BaseRenderer {
         return lane;
     }
 
-    private draw_note(obj: IHitObject, time: number, x_offset: number): void {
+    private draw_note(obj: RenderHitObject, time: number, x_offset: number): void {
         const { backend, skin, key_count } = this;
         const lane = this.get_lane(obj);
 
@@ -166,9 +162,9 @@ export class ManiaRenderer extends BaseRenderer {
         backend.draw_rect(x + spacing, y - note_height, lane_width - 2 * spacing, note_height, color);
     }
 
-    private draw_hold_note(obj: IHitObject, time: number, x_offset: number): void {
+    private draw_hold_note(obj: RenderHitObject, time: number, x_offset: number): void {
         const { backend, skin, key_count } = this;
-        const data = obj.data as IHoldData;
+        const data = obj.data as RenderHoldData;
         const lane = this.get_lane(obj);
 
         const lane_width = skin.mania_lane_width;

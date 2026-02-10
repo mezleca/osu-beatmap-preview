@@ -1,4 +1,4 @@
-import type { IHitObject } from "../../types/beatmap";
+import type { RenderHitObject } from "../render_types";
 import { Drawable, type DrawableConfig } from "./drawable";
 import { CircleVisual } from "./circle_visual";
 import { get_combo_color } from "../../skin/skin_config";
@@ -6,7 +6,7 @@ import { get_combo_color } from "../../skin/skin_config";
 export class DrawableHitCircle extends Drawable {
     private visual = new CircleVisual();
 
-    constructor(hit_object: IHitObject, config: DrawableConfig) {
+    constructor(hit_object: RenderHitObject, config: DrawableConfig) {
         super(hit_object, config);
     }
 

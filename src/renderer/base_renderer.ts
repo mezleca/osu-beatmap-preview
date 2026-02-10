@@ -1,5 +1,6 @@
 import type { IRenderBackend, RenderImage } from "./backend/render_backend";
-import type { IBeatmap, IHitObject } from "../types/beatmap";
+import type { IBeatmap } from "../types/beatmap";
+import type { RenderHitObject } from "./render_types";
 import type { ISkinConfig } from "../skin/skin_config";
 
 // osu! playfield is 512x384 in osu! pixels
@@ -60,7 +61,7 @@ export abstract class BaseRenderer {
     protected mods: number;
 
     protected beatmap!: IBeatmap;
-    protected objects: IHitObject[] = [];
+    protected objects: RenderHitObject[] = [];
     protected background_image: RenderImage | null = null;
 
     constructor(backend: IRenderBackend, skin: ISkinConfig, mods: number = 0, config: IRendererConfig = DEFAULT_RENDERER_CONFIG) {
@@ -83,6 +84,8 @@ export abstract class BaseRenderer {
 
     // update mods and recalculate difficulty attributes
     abstract set_mods(mods: number): void;
+
+    precompute(): void {}
 
     dispose(): void {
         this.objects = [];
@@ -169,8 +172,8 @@ export abstract class BaseRenderer {
         backend.restore();
     }
 
-    protected get_visible_objects(time: number, preempt: number, fade_out: number): IHitObject[] {
-        const visible: IHitObject[] = [];
+    protected get_visible_objects(time: number, preempt: number, fade_out: number): RenderHitObject[] {
+        const visible: RenderHitObject[] = [];
 
         for (const obj of this.objects) {
             const appear_time = obj.time - preempt;
