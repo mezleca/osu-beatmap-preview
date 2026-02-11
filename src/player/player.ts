@@ -16,7 +16,6 @@ import { HitsoundController } from "./hitsound_controller";
 import { type ISkinConfig, merge_skin } from "../skin/skin_config";
 import { BeatmapAssets } from "./beatmap_assets";
 import { process_timing_points } from "../beatmap/timing";
-import { load_default_hitsounds } from "./hitsound_assets";
 import { TimingStateResolver } from "../renderer/standard/timing_state";
 import { calculate_slider_duration, calculate_tick_spacing } from "../renderer/standard/slider_math";
 import { generate_slider_events } from "../renderer/standard/slider_events";
@@ -90,8 +89,6 @@ export class BeatmapPlayer {
     private resize_observer: ResizeObserver | null = null;
     private key_handler: ((e: KeyboardEvent) => void) | null = null;
     private options: IPlayerOptions;
-    private default_hitsounds: Map<string, ArrayBuffer> | null = null;
-    private default_hitsounds_base_url: string | null = null;
 
     // fps tracking
     private enable_fps_counter = false;
@@ -189,31 +186,15 @@ export class BeatmapPlayer {
         }
     }
 
-    async load_hitsounds(files?: Map<string, ArrayBuffer>, base_url: string = "/assets/hitsounds"): Promise<void> {
+    async load_hitsounds(files?: Map<string, ArrayBuffer>): Promise<void> {
         const source = files ?? this.resources?.files;
-        if (!source && !base_url) {
+        if (!source) {
             console.warn("[BeatmapPlayer] No files available for hitsounds");
             return;
         }
 
         try {
-            const defaults = await this.ensure_default_hitsounds(base_url);
-            const merged = new Map<string, ArrayBuffer>();
-            for (const [name, data] of defaults) {
-                merged.set(name, data);
-            }
-            if (source) {
-                // map files override defaults
-                for (const [name, data] of source) {
-                    merged.set(name, data);
-                }
-            }
-
-            if (merged.size === 0) {
-                return;
-            }
-
-            await this.hitsounds.load_samples(merged);
+            await this.hitsounds.load_samples(source);
         } catch (e) {
             console.error("[BeatmapPlayer] Failed to load hitsounds:", e);
         }
@@ -385,20 +366,6 @@ export class BeatmapPlayer {
         if (!this.resources.video_offset && assets.video_offset) {
             this.resources.video_offset = assets.video_offset;
         }
-    }
-
-    private async ensure_default_hitsounds(base_url: string): Promise<Map<string, ArrayBuffer>> {
-        if (!base_url) {
-            return new Map();
-        }
-
-        if (this.default_hitsounds && this.default_hitsounds_base_url === base_url) {
-            return this.default_hitsounds;
-        }
-
-        this.default_hitsounds_base_url = base_url;
-        this.default_hitsounds = await load_default_hitsounds(base_url);
-        return this.default_hitsounds;
     }
 
     private create_renderer(beatmap: IBeatmap): BaseRenderer {

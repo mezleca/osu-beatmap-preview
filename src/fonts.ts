@@ -1,6 +1,10 @@
-export const load_default_fonts = async (base_url: string = "/assets/fonts"): Promise<void> => {
+export const load_default_fonts = async (base_url?: string): Promise<void> => {
     // ensure we have fonts api
     if (typeof document === "undefined" || !("fonts" in document)) {
+        return;
+    }
+
+    if (!base_url) {
         return;
     }
 

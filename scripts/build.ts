@@ -55,12 +55,6 @@ const OUT_DIR = "./dist";
         console.warn("[warn] wasm bundle not found. run bun install or ensure @rel-packages/osu-beatmap-parser is installed.");
     }
 
-    const assets_source = join("src", "assets");
-    const assets_target = join(OUT_DIR, "assets");
-    if (existsSync(assets_source)) {
-        cpSync(assets_source, assets_target, { recursive: true });
-    }
-
     console.log("build complete!");
     console.log(
         "output:",

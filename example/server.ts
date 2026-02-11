@@ -43,6 +43,11 @@ const server = Bun.serve({
 
         if (path.startsWith("/assets/")) {
             const rel = path.replace("/assets/", "");
+            const example_file = Bun.file(`./example/assets/${rel}`);
+            if (await example_file.exists()) {
+                return new Response(example_file);
+            }
+
             const dist_file = Bun.file(`./dist/assets/${rel}`);
             if (await dist_file.exists()) {
                 return new Response(dist_file);

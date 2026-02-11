@@ -26,11 +26,58 @@ const drop_zone = $("drop-zone") as HTMLDivElement;
 const diff_select = $("diff-select") as HTMLSelectElement;
 
 // ensure fonts are loaded before first render
-await load_default_fonts();
+await load_default_fonts("/assets/fonts");
 
 // player instance
 let player: BeatmapPlayer | null = null;
 let active_mods: number = 0;
+
+const default_hitsounds = [
+    "drum--hitwhistle.wav",
+    "drum-hitclap.wav",
+    "drum-hitclap3.wav",
+    "drum-hitnormal.wav",
+    "drum-hitnormalh.wav",
+    "drum-hitwhistle.wav",
+    "drum-sliderslide.wav",
+    "drum-slidertick.wav",
+    "normal-hitclap.wav",
+    "normal-hitclap2.wav",
+    "normal-hitfinish.wav",
+    "normal-hitfinish2.wav",
+    "normal-hitnormal.wav",
+    "normal-hitnormalh.wav",
+    "normal-hitwhistle.wav",
+    "normal-slidertick.wav",
+    "soft-hitclap.wav",
+    "soft-hitclap2.wav",
+    "soft-hitfinish.wav",
+    "soft-hitfinish2.wav",
+    "soft-hitnormal.wav",
+    "soft-hitnormal1.wav",
+    "soft-hitnormal2.wav",
+    "soft-hitsoft.wav",
+    "soft-hitwhistle.wav",
+    "soft-sliderslide.wav",
+    "soft-slidertick.wav",
+    "soft-sliderwhistle.wav"
+];
+
+const load_default_hitsounds = async (target: BeatmapPlayer) => {
+    const files = new Map<string, ArrayBuffer>();
+
+    for (const name of default_hitsounds) {
+        const response = await fetch(`/assets/hitsounds/${name}`);
+        if (!response.ok) {
+            continue;
+        }
+        files.set(name, await response.arrayBuffer());
+    }
+
+    if (files.size > 0) {
+        await target.load_hitsounds(files);
+    }
+};
 
 const format_time = (ms: number): string => {
     const s = Math.floor(ms / 1000);
@@ -94,8 +141,6 @@ let setup_player_events = (p: BeatmapPlayer) => {
             player.set_mods(active_mods);
         }
         update_progress(player?.current_time ?? 0, player?.duration ?? 0);
-        player?.load_hitsounds();
-
         // populate difficulty selector
         if (resources.available_difficulties.length > 1) {
             diff_select.style.display = "block";
@@ -141,12 +186,12 @@ const load_beatmap = async (data: ArrayBuffer, filename: string) => {
         canvas,
         mods: active_mods,
         volume: 0.5,
-        hitsound_volume: 0.25,
-        audio_offset: 20,
         playfield_scale: 0.9,
         auto_resize: true,
         enable_fps_counter: true
     });
+
+    await load_default_hitsounds(player);
 
     setup_player_events(player);
 
