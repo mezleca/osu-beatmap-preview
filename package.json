@@ -1,6 +1,6 @@
 {
     "name": "@rel-packages/osu-beatmap-preview",
-    "version": "0.8.3",
+    "version": "0.8.4",
     "description": "one of the beatmap preview of all time",
     "type": "module",
     "main": "dist/index.js",
