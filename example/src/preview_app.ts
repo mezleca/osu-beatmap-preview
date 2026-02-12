@@ -1,13 +1,4 @@
-import {
-    BeatmapPlayer,
-    GameMode,
-    load_font,
-    toggle_mod,
-    has_mod,
-    get_available_mods,
-    type IBeatmap,
-    type IBeatmapResources
-} from "../../src";
+import { BeatmapPlayer, GameMode, load_font, toggle_mod, has_mod, get_available_mods, type IBeatmap, type IBeatmapResources } from "../../src";
 
 let is_initialized = false;
 

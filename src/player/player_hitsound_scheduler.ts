@@ -30,7 +30,12 @@ export class PlayerHitsoundScheduler {
         private hitsounds: HitsoundController
     ) {}
 
-    set_context(resources: IBeatmapResources | null, timing_points: ITimingPoint[], timing_resolver: TimingStateResolver | null, audio_offset: number): void {
+    set_context(
+        resources: IBeatmapResources | null,
+        timing_points: ITimingPoint[],
+        timing_resolver: TimingStateResolver | null,
+        audio_offset: number
+    ): void {
         this.resources = resources;
         this.timing_points = timing_points;
         this.timing_resolver = timing_resolver;
@@ -173,7 +178,10 @@ export class PlayerHitsoundScheduler {
         return { normal_set, addition_set, index, volume, custom_filename };
     }
 
-    private resolve_edge_sets(base: { normal_set: SampleSet; addition_set: SampleSet }, edge_set?: { normalSet: number; additionSet: number }): {
+    private resolve_edge_sets(
+        base: { normal_set: SampleSet; addition_set: SampleSet },
+        edge_set?: { normalSet: number; additionSet: number }
+    ): {
         normal_set: SampleSet;
         addition_set: SampleSet;
     } {

@@ -157,12 +157,7 @@ export class HitsoundController extends AudioNodeController {
         }
     }
 
-    private async load_single_sample(
-        url: string,
-        key: string,
-        target: Map<string, AudioBuffer>,
-        failed: string[]
-    ): Promise<void> {
+    private async load_single_sample(url: string, key: string, target: Map<string, AudioBuffer>, failed: string[]): Promise<void> {
         try {
             const response = await fetch(url);
             if (!response.ok) {
