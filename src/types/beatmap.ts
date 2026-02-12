@@ -1,4 +1,4 @@
-import type { OsuFileFormat, HitObject, TimingPoint, HitSample, CurvePoint } from "@rel-packages/osu-beatmap-parser/dist/types/types";
+import type { OsuFileFormat, HitObject, TimingPoint, HitSample, CurvePoint } from "@rel-packages/osu-beatmap-parser";
 
 // game modes
 export enum GameMode {

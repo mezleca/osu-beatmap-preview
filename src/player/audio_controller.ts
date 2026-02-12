@@ -1,11 +1,9 @@
-import { clamp } from "@/math/vector2";
 import { get_speed_multiplier } from "../types/mods";
+import { AudioNodeController } from "./audio_node_controller";
 
-export class AudioController {
-    private audio_context: AudioContext;
+export class AudioController extends AudioNodeController {
     private audio_source: AudioBufferSourceNode | null = null;
     private audio_buffer: AudioBuffer | null = null;
-    private gain_node: GainNode;
 
     private start_time: number = 0;
     private pause_time: number = 0;
@@ -15,9 +13,7 @@ export class AudioController {
     private _is_loaded: boolean = false;
 
     constructor(context: AudioContext) {
-        this.audio_context = context;
-        this.gain_node = this.audio_context.createGain();
-        this.gain_node.connect(this.audio_context.destination);
+        super(context);
     }
 
     get is_playing(): boolean {
@@ -143,12 +139,6 @@ export class AudioController {
         }
     }
 
-    set_volume(volume: number): void {
-        if (this.gain_node) {
-            this.gain_node.gain.value = clamp(volume, 0, 1);
-        }
-    }
-
     set_speed(speed: number): void {
         if (this._is_playing) {
             // capture current position before speed change
@@ -171,6 +161,6 @@ export class AudioController {
         this._is_loaded = false;
 
         // disconnect gain node but don't close context (shared)
-        this.gain_node.disconnect();
+        this.dispose_audio_node();
     }
 }

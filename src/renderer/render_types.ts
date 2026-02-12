@@ -1,4 +1,4 @@
-import type { HitObject as OsuHitObject } from "@rel-packages/osu-beatmap-parser/dist/types/types";
+import type { HitObject as OsuHitObject } from "@rel-packages/osu-beatmap-parser";
 import type { Vec2 } from "../math/vector2";
 
 export type SliderPathType = "L" | "B" | "P" | "C";

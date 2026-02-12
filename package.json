@@ -23,10 +23,10 @@
         "build": "bun run scripts/build.ts",
         "format": "prettier --write .",
         "type-check": "tsc --noEmit -p src/tsconfig.json",
-        "example": "bun run --hot example/server.ts"
+        "example": "cd example && bun run dev"
     },
     "dependencies": {
-        "@rel-packages/osu-beatmap-parser": "^1.4.3",
+        "@rel-packages/osu-beatmap-parser": "^1.5.4",
         "jszip": "^3.10.1"
     },
     "devDependencies": {

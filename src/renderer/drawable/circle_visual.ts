@@ -53,7 +53,8 @@ export class CircleVisual {
             if (number_alpha > 0.01) {
                 const font_size = radius * 0.7 * circle_scale;
                 backend.set_alpha(number_alpha * skin.hit_circle_opacity);
-                const font = `600 ${font_size}px ${skin.font_family}`;
+                const font_name = skin.default_font ?? '"Trebuchet MS", Verdana, Arial, sans-serif';
+                const font = `600 ${font_size}px ${font_name}`;
                 backend.draw_text(String(combo_count), position[0], position[1], font, "rgba(255,255,255,1)", "center", "middle");
             }
 

@@ -1,10 +1,10 @@
-import type { IBeatmap, IHitObject, ITimingPoint, IHitSample } from "../types/beatmap";
-import { GameMode, SampleSet, HitObjectType } from "../types/beatmap";
+import type { IBeatmap, ITimingPoint } from "../types/beatmap";
+import { GameMode } from "../types/beatmap";
 import type { IBeatmapResources } from "../types/resources";
 import { type Result, ErrorCode, ok, err } from "../types/result";
 import { get_speed_multiplier } from "../types/mods";
 import { OszLoader } from "../parser/osz_loader";
-import { init_wasm, parse as wasm_parse } from "@rel-packages/osu-beatmap-parser/dist/lib/wasm-wrapper.js";
+import { init_wasm, parse as wasm_parse } from "@rel-packages/osu-beatmap-parser/browser";
 import { BaseRenderer, DEFAULT_RENDERER_CONFIG, type IRendererConfig } from "../renderer/base_renderer";
 import type { IRenderBackend } from "../renderer/backend/render_backend";
 import { CanvasBackend } from "../renderer/backend/canvas_backend";
@@ -17,13 +17,11 @@ import { type ISkinConfig, merge_skin } from "../skin/skin_config";
 import { BeatmapAssets } from "./beatmap_assets";
 import { process_timing_points } from "../beatmap/timing";
 import { TimingStateResolver } from "../renderer/standard/timing_state";
-import { calculate_slider_duration, calculate_tick_spacing } from "../renderer/standard/slider_math";
-import { generate_slider_events } from "../renderer/standard/slider_events";
+import { PlayerHitsoundScheduler } from "./player_hitsound_scheduler";
+import { collect_map_custom_hitsound_files } from "./hitsound_file_collector";
 
 const PREVIEW_FALLBACK_RATIO = 0.42;
-const HITSOUND_LOOKAHEAD_MS = 100;
 const RESYNC_THRESHOLD_MS = 30;
-const HIT_WINDOW_MS = 20;
 
 type PlayerEventMap = {
     timeupdate: [time: number, duration: number];
@@ -38,10 +36,13 @@ type PlayerEventMap = {
 
 type PlayerEvent = keyof PlayerEventMap;
 
+export type StartMode = "preview" | "beginning" | "custom";
+
 export interface IPlayerOptions {
     canvas: HTMLCanvasElement;
     skin?: Partial<ISkinConfig>;
     mods?: number;
+    start_mode?: StartMode;
     start_time?: number;
     autoplay?: boolean;
     volume?: number;
@@ -73,16 +74,17 @@ export class BeatmapPlayer {
     private mods: number;
     private renderer_config: IRendererConfig;
     private start_offset: number;
+    private start_mode: StartMode;
+    private custom_start_time: number | null;
     private music_volume: number;
     private hitsound_volume: number;
     private audio_offset: number;
     private background_url: string | null = null;
 
     private listeners: Map<PlayerEvent, Set<Function>> = new Map();
-    private raw_osu_content: string = "";
     private is_loaded_flag: boolean = false;
 
-    private next_hit_object_index: number = 0;
+    private hitsound_scheduler: PlayerHitsoundScheduler;
     private timing_points: ITimingPoint[] = [];
     private timing_resolver: TimingStateResolver | null = null;
 
@@ -112,7 +114,9 @@ export class BeatmapPlayer {
         // calculate scale and offset
         this.calculate_layout(options.canvas.width, options.canvas.height, options.playfield_scale);
 
-        this.start_offset = options.start_time ?? -1;
+        this.start_mode = options.start_mode ?? (Number.isFinite(options.start_time) ? "custom" : "preview");
+        this.custom_start_time = Number.isFinite(options.start_time) ? Math.max(0, options.start_time as number) : null;
+        this.start_offset = 0;
         this.music_volume = options.volume ?? 0.5;
         this.hitsound_volume = options.hitsound_volume ?? 0.25;
         this.audio_offset = options.audio_offset ?? 20;
@@ -127,6 +131,7 @@ export class BeatmapPlayer {
 
         this.audio = new AudioController(this.audio_context);
         this.hitsounds = new HitsoundController(this.audio_context);
+        this.hitsound_scheduler = new PlayerHitsoundScheduler(this.audio, this.hitsounds);
 
         // set initial volumes
         this.audio.set_volume(this.music_volume);
@@ -170,14 +175,6 @@ export class BeatmapPlayer {
             const loader = new OszLoader();
             this.resources = await loader.load_from_files(files, { difficulty });
 
-            // store raw content for preview time extraction
-            for (const [name, content] of files) {
-                if (name.endsWith(".osu")) {
-                    this.raw_osu_content = typeof content === "string" ? content : new TextDecoder().decode(content);
-                    break;
-                }
-            }
-
             return this.setup();
         } catch (e) {
             const reason = e instanceof Error ? e.message : String(e);
@@ -186,17 +183,49 @@ export class BeatmapPlayer {
         }
     }
 
-    async load_hitsounds(files?: Map<string, ArrayBuffer>): Promise<void> {
-        const source = files ?? this.resources?.files;
-        if (!source) {
-            console.warn("[BeatmapPlayer] No files available for hitsounds");
+    async load_default_hitsounds(urls: string[]): Promise<void> {
+        if (urls.length == 0) {
+            console.warn("[BeatmapPlayer] No default hitsound URLs were provided");
             return;
         }
 
         try {
-            await this.hitsounds.load_samples(source);
+            await this.hitsounds.load_default_samples(urls);
         } catch (e) {
-            console.error("[BeatmapPlayer] Failed to load hitsounds:", e);
+            console.error("[BeatmapPlayer] Failed to load default hitsounds:", e);
+        }
+    }
+
+    async load_custom_hitsounds(urls: string[]): Promise<void> {
+        if (urls.length == 0) {
+            console.warn("[BeatmapPlayer] No custom hitsound URLs were provided");
+            this.hitsounds.clear();
+            return;
+        }
+
+        try {
+            await this.hitsounds.load_samples(urls);
+        } catch (e) {
+            console.error("[BeatmapPlayer] Failed to load custom hitsounds:", e);
+        }
+    }
+
+    private async load_map_custom_hitsounds(): Promise<void> {
+        if (!this.resources?.beatmap) {
+            return;
+        }
+
+        const files = collect_map_custom_hitsound_files(this.resources.beatmap, this.resources.files, this.resources.audio_filename);
+        if (files.size == 0) {
+            this.hitsounds.clear();
+            return;
+        }
+
+        try {
+            await this.hitsounds.load_samples_from_files(files);
+        } catch (e) {
+            console.error("[BeatmapPlayer] Failed to load map custom hitsounds:", e);
+            this.hitsounds.clear();
         }
     }
 
@@ -222,8 +251,7 @@ export class BeatmapPlayer {
     async load_osu_content(content: string, audio?: ArrayBuffer): Promise<Result<IBeatmapResources>> {
         try {
             await init_wasm();
-            const beatmap = this.parse_content(content);
-            this.raw_osu_content = content;
+            const beatmap = await this.parse_content(content);
             return this.load_beatmap(beatmap, audio);
         } catch (e) {
             const reason = e instanceof Error ? e.message : String(e);
@@ -243,13 +271,7 @@ export class BeatmapPlayer {
             await init_wasm();
             const is_string = typeof osu_content === "string";
             const bytes = osu_content instanceof Uint8Array ? osu_content : osu_content instanceof ArrayBuffer ? new Uint8Array(osu_content) : null;
-            const beatmap = this.parse_content(is_string ? osu_content : (bytes as Uint8Array));
-
-            if (is_string) {
-                this.raw_osu_content = osu_content;
-            } else if (bytes) {
-                this.raw_osu_content = new TextDecoder().decode(bytes);
-            }
+            const beatmap = await this.parse_content(is_string ? osu_content : (bytes as Uint8Array));
 
             return this.load_beatmap(beatmap, audio, background, video, video_offset);
         } catch (e) {
@@ -283,6 +305,9 @@ export class BeatmapPlayer {
             }
         }
 
+        this.hitsound_scheduler.set_context(this.resources, this.timing_points, this.timing_resolver, this.audio_offset);
+        void this.load_map_custom_hitsounds();
+
         // setup video
         if (video) {
             this.video = new VideoController();
@@ -300,20 +325,10 @@ export class BeatmapPlayer {
             return err(ErrorCode.UnsupportedMode, reason);
         }
 
-        // determine start time from preview point
-        if (this.start_offset < 0) {
-            const preview = beatmap.General.PreviewTime;
-            // preview time can be missing; fallback to a mid-map point for a nicer default
-            this.start_offset = preview > 0 ? preview : this.get_last_object_time() * PREVIEW_FALLBACK_RATIO;
-        }
-        if (this.start_offset < 0) {
-            this.start_offset = 0;
-        }
+        this.start_offset = this.resolve_initial_start_offset();
 
-        // ensure start index is correct
-        this.update_hit_index(this.start_offset);
-
-        await this.load_background();
+        this.hitsound_scheduler.update_hit_index(this.start_offset);
+        void this.load_background();
 
         this.is_loaded_flag = true;
         this.emit("loaded", beatmap, this.resources);
@@ -343,6 +358,9 @@ export class BeatmapPlayer {
                 width: img.width,
                 height: img.height
             });
+
+            const target_time = this.audio.is_playing ? this.current_time : this.start_offset;
+            requestAnimationFrame(() => this.render_frame(target_time));
         } catch (e) {
             console.warn("[BeatmapPlayer] Failed to load background", e);
         }
@@ -392,6 +410,37 @@ export class BeatmapPlayer {
             if (end_time > max_time) max_time = end_time;
         }
         return max_time;
+    }
+
+    private resolve_preview_start_offset(): number {
+        if (!this.resources?.beatmap) {
+            return 0;
+        }
+
+        const preview = this.resources.beatmap.General.PreviewTime;
+        if (preview > 0) {
+            return preview;
+        }
+
+        return Math.max(0, this.get_last_object_time() * PREVIEW_FALLBACK_RATIO);
+    }
+
+    private resolve_initial_start_offset(): number {
+        const max_duration = Math.max(0, this.duration);
+
+        if (this.start_mode == "beginning") {
+            return 0;
+        }
+
+        if (this.start_mode == "custom") {
+            if (this.custom_start_time !== null) {
+                return Math.max(0, Math.min(this.custom_start_time, max_duration));
+            }
+
+            return Math.max(0, Math.min(this.resolve_preview_start_offset(), max_duration));
+        }
+
+        return Math.max(0, Math.min(this.resolve_preview_start_offset(), max_duration));
     }
 
     async play(): Promise<void> {
@@ -447,8 +496,7 @@ export class BeatmapPlayer {
         // update start offset for both playing and paused states
         this.start_offset = Math.max(0, Math.min(time_ms, this.duration));
 
-        // update hit index to avoid replaying hits or missing future hits
-        this.update_hit_index(this.start_offset);
+        this.hitsound_scheduler.update_hit_index(this.start_offset);
 
         this.audio.seek(Math.max(0, this.start_offset + this.audio_offset));
         this.video?.seek(this.start_offset);
@@ -473,17 +521,6 @@ export class BeatmapPlayer {
             const result = await loader.load_from_files(this.resources.files, { difficulty: index });
             this.resources = result;
 
-            // update raw content for preview time extraction
-            const selected_file = this.resources.available_difficulties.find(
-                (d) => d.beatmap.Metadata.Version === this.resources!.beatmap.Metadata.Version
-            )?.filename;
-            if (selected_file) {
-                const content = this.resources.files.get(selected_file);
-                if (content) {
-                    this.raw_osu_content = typeof content === "string" ? content : new TextDecoder().decode(content);
-                }
-            }
-
             const setup_result = await this.setup();
 
             if (setup_result.success && was_playing) {
@@ -498,34 +535,16 @@ export class BeatmapPlayer {
         }
     }
 
-    private update_hit_index(time: number): void {
-        if (!this.resources?.beatmap) {
-            return;
-        }
-
-        const objects = this.resources.beatmap.HitObjects;
-
-        // reset if we seeked backwards so old hits can be replayed
-        if (this.next_hit_object_index > 0 && objects[this.next_hit_object_index - 1].time > time) {
-            this.next_hit_object_index = 0;
-        }
-
-        // fast forward to the first object after the target time
-        while (this.next_hit_object_index < objects.length && objects[this.next_hit_object_index].time < time) {
-            this.next_hit_object_index++;
-        }
-    }
-
-    private parse_content(content: string | Uint8Array): IBeatmap {
+    private async parse_content(content: string | Uint8Array): Promise<IBeatmap> {
         const data = typeof content == "string" ? new TextEncoder().encode(content) : content;
-        return wasm_parse(data) as IBeatmap;
+        return (await wasm_parse(data)) as IBeatmap;
     }
 
     stop(): void {
         this.pause();
         this.start_offset = 0;
         this.audio.seek(Math.max(0, this.audio_offset));
-        this.update_hit_index(0);
+        this.hitsound_scheduler.update_hit_index(0);
         this.render_frame(0);
     }
 
@@ -711,6 +730,7 @@ export class BeatmapPlayer {
 
     set_offset(offset_ms: number): void {
         this.audio_offset = offset_ms;
+        this.hitsound_scheduler.set_audio_offset(offset_ms);
         if (this.is_loaded_flag) {
             this.seek(this.current_time);
         }
@@ -782,8 +802,7 @@ export class BeatmapPlayer {
 
             const time = this.smooth_time;
 
-            // process hitsounds
-            this.schedule_hitsounds(actual_audio_time);
+            this.hitsound_scheduler.schedule_hitsounds(actual_audio_time);
 
             this.render_frame(time);
             this.video?.sync(time);
@@ -800,186 +819,6 @@ export class BeatmapPlayer {
         };
 
         this.animation_frame = requestAnimationFrame(loop);
-    }
-
-    private schedule_hitsounds(time: number): void {
-        if (!this.resources?.beatmap || !this.audio.is_playing) {
-            return;
-        }
-
-        const objects = this.resources.beatmap.HitObjects;
-        const schedule_window = time + HITSOUND_LOOKAHEAD_MS;
-
-        // schedule only a small window ahead to avoid piling up AudioBufferSource nodes
-        while (this.next_hit_object_index < objects.length && objects[this.next_hit_object_index].time <= schedule_window) {
-            const obj = objects[this.next_hit_object_index];
-
-            // only play if it hasn't passed by too much
-            // but we rely on update_hit_index to skip old ones on seek
-            if (obj.time >= time - HIT_WINDOW_MS) {
-                this.play_hitsound(obj);
-            }
-
-            this.next_hit_object_index++;
-        }
-    }
-
-    private play_hitsound(obj: IHitObject): void {
-        const timing = this.get_timing_point(obj.time);
-        const base = this.resolve_sample_settings(timing, obj.hitSample);
-
-        if ((obj.type & HitObjectType.Slider) === 0) {
-            this.play_node_hitsound(obj.time, obj.hitSound, base, base.custom_filename);
-            return;
-        }
-
-        const beatmap = this.resources?.beatmap;
-        if (!beatmap) {
-            return;
-        }
-
-        const timing_state = this.timing_resolver?.get_state_at(obj.time) ?? { base_beat_length: 600, sv_multiplier: 1 };
-        const length = obj.length ?? 0;
-        const span_duration = calculate_slider_duration(length, beatmap, timing_state);
-        const span_count = Math.max(1, obj.slides || 1);
-
-        if (span_duration <= 0 || length <= 0) {
-            this.play_node_hitsound(obj.time, obj.hitSound, base, base.custom_filename);
-            return;
-        }
-
-        const edge_sounds = obj.edgeSounds ?? [];
-        const edge_sets = obj.edgeSets ?? [];
-
-        for (let i = 0; i <= span_count; i++) {
-            const node_time = obj.time + span_duration * i;
-            const node_sound = edge_sounds.length > 0 ? (edge_sounds[i] ?? 0) : i === 0 ? obj.hitSound : 0;
-            const node_sets = edge_sets.length > 0 ? edge_sets[i] : undefined;
-            const resolved = this.resolve_edge_sets(base, node_sets);
-            const custom = i === 0 ? base.custom_filename : undefined;
-            this.play_node_hitsound(node_time, node_sound, { ...base, ...resolved }, custom);
-        }
-
-        const spacing = calculate_tick_spacing(beatmap, timing_state);
-        const events = generate_slider_events({
-            start_time: obj.time,
-            span_duration,
-            span_count,
-            length,
-            tick_distance: spacing.tick_distance,
-            min_distance_from_end: spacing.min_distance_from_end,
-            get_position_at_progress: () => [0, 0]
-        });
-
-        for (const tick of events.ticks) {
-            const when = this.audio.get_host_time(tick.time + this.audio_offset);
-            this.hitsounds.play_sample(base.normal_set, "slidertick", base.index, base.volume, when);
-        }
-    }
-
-    private play_node_hitsound(
-        time: number,
-        hit_sound: number,
-        sample: { normal_set: SampleSet; addition_set: SampleSet; index: number; volume: number; custom_filename?: string },
-        custom_filename?: string
-    ): void {
-        const when = this.audio.get_host_time(time + this.audio_offset);
-        this.hitsounds.play(sample.normal_set, sample.addition_set, hit_sound, sample.index, sample.volume, custom_filename, when);
-    }
-
-    private resolve_sample_settings(
-        timing: ITimingPoint,
-        hit_sample?: IHitSample
-    ): { normal_set: SampleSet; addition_set: SampleSet; index: number; volume: number; custom_filename?: string } {
-        let volume = timing.volume;
-        let normal_set = timing.sampleSet as SampleSet;
-        let addition_set = timing.sampleSet as SampleSet;
-        let index = timing.sampleIndex;
-        let custom_filename: string | undefined = undefined;
-
-        if (hit_sample) {
-            if (hit_sample.normalSet !== SampleSet.Auto) {
-                normal_set = hit_sample.normalSet as SampleSet;
-                if (hit_sample.additionSet === SampleSet.Auto) {
-                    addition_set = normal_set;
-                }
-            }
-
-            if (hit_sample.additionSet !== SampleSet.Auto) {
-                addition_set = hit_sample.additionSet as SampleSet;
-            }
-
-            if (hit_sample.index !== 0) {
-                index = hit_sample.index;
-            }
-            if (hit_sample.volume !== 0) {
-                volume = hit_sample.volume;
-            }
-            custom_filename = hit_sample.filename || undefined;
-        }
-
-        if (normal_set === SampleSet.Auto) {
-            normal_set = SampleSet.Normal;
-        }
-        if (addition_set === SampleSet.Auto) {
-            addition_set = normal_set;
-        }
-
-        return { normal_set, addition_set, index, volume, custom_filename };
-    }
-
-    private resolve_edge_sets(
-        base: { normal_set: SampleSet; addition_set: SampleSet },
-        edge_set?: { normalSet: number; additionSet: number }
-    ): { normal_set: SampleSet; addition_set: SampleSet } {
-        let normal_set = base.normal_set;
-        let addition_set = base.addition_set;
-
-        if (edge_set) {
-            const edge_normal = edge_set.normalSet as SampleSet;
-            const edge_add = edge_set.additionSet as SampleSet;
-
-            if (edge_normal !== SampleSet.Auto) {
-                normal_set = edge_normal;
-            }
-            if (edge_add !== SampleSet.Auto) {
-                addition_set = edge_add;
-            } else {
-                addition_set = normal_set;
-            }
-        }
-
-        if (normal_set === SampleSet.Auto) {
-            normal_set = SampleSet.Normal;
-        }
-        if (addition_set === SampleSet.Auto) {
-            addition_set = normal_set;
-        }
-
-        return { normal_set, addition_set };
-    }
-
-    private get_timing_point(time: number): ITimingPoint {
-        const points = this.timing_points;
-        if (points.length === 0) {
-            return {
-                time: 0,
-                beatLength: 600,
-                meter: 4,
-                sampleSet: SampleSet.Normal,
-                sampleIndex: 1,
-                volume: 100,
-                uninherited: 1,
-                effects: 0
-            };
-        }
-
-        for (let i = points.length - 1; i >= 0; i--) {
-            if (points[i].time <= time) {
-                return points[i];
-            }
-        }
-        return points[0];
     }
 
     private stop_render_loop(): void {
@@ -1006,7 +845,8 @@ export class BeatmapPlayer {
                 this.fps_last_update = now;
             }
 
-            this.backend.draw_text(`${this.current_fps} FPS`, 10, 20, "14px monospace", "rgba(255,255,255,0.8)", "left", "top");
+            const fps_font = `14px ${this.skin.default_font ?? "monospace"}`;
+            this.backend.draw_text(`${this.current_fps} FPS`, 10, 20, fps_font, "rgba(255,255,255,0.8)", "left", "top");
         }
 
         this.backend.end_frame?.();

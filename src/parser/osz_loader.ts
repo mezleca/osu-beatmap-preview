@@ -1,7 +1,7 @@
 import JSZip from "jszip";
 import type { IBeatmap } from "../types/beatmap";
 import type { IBeatmapResources } from "../types/resources";
-import { init_wasm, parse as wasm_parse } from "@rel-packages/osu-beatmap-parser/dist/lib/wasm-wrapper.js";
+import { init_wasm, parse as wasm_parse } from "@rel-packages/osu-beatmap-parser/browser";
 
 export interface IOszLoaderOptions {
     // select difficulty by index or version name
@@ -37,7 +37,7 @@ export class OszLoader {
             osu_files.map(async (file) => {
                 const content = files.get(file)!;
                 const data = this.to_bytes(content);
-                const beatmap = wasm_parse(data) as IBeatmap;
+                const beatmap = (await wasm_parse(data)) as IBeatmap;
                 return { filename: file, beatmap };
             })
         );
@@ -48,7 +48,7 @@ export class OszLoader {
         const osu_bytes = this.to_bytes(osu_content);
 
         // parse full beatmap (async via worker)
-        const beatmap = wasm_parse(osu_bytes) as IBeatmap;
+        const beatmap = (await wasm_parse(osu_bytes)) as IBeatmap;
 
         const audio_filename = beatmap.General.AudioFilename || null;
         const background_filename = beatmap.Events.background?.filename || null;

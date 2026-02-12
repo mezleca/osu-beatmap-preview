@@ -61,7 +61,7 @@ export interface ISkinConfig {
     mania_lane_colors: Record<number, string[]>;
 
     // general
-    font_family: string;
+    default_font?: string;
     hit_animation_duration: number;
     hit_animation_scale: number;
 
@@ -132,7 +132,7 @@ export const DEFAULT_SKIN: ISkinConfig = {
     mania_lane_spacing: 1,
     mania_lane_colors: MANIA_KEY_COLORS,
 
-    font_family: '"Kozuka Gothic Pro B", sans-serif',
+    default_font: '"Trebuchet MS", Verdana, Arial, sans-serif',
     hit_animation_duration: 240,
     hit_animation_scale: 1.2,
 

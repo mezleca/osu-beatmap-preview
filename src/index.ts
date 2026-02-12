@@ -1,5 +1,5 @@
 // player
-export { BeatmapPlayer, type IPlayerOptions } from "./player/player";
+export { BeatmapPlayer, type IPlayerOptions, type StartMode } from "./player/player";
 export { AudioController } from "./player/audio_controller";
 export { VideoController } from "./player/video_controller";
 
@@ -25,4 +25,4 @@ export { StandardRenderer } from "./renderer/standard/standard_renderer";
 export { ManiaRenderer } from "./renderer/mania/mania_renderer";
 
 // fonts
-export { load_default_fonts } from "./fonts";
+export { load_font } from "./fonts";
