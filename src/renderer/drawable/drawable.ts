@@ -88,6 +88,7 @@ export abstract class Drawable {
     // multi-pass rendering support
     render_body_pass(time: number): void {}
     render_head_pass(time: number): void {}
+    dispose(): void {}
 
     get start_time(): number {
         return this.hit_object.time;

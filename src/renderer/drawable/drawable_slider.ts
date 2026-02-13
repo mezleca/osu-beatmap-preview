@@ -319,6 +319,21 @@ export class DrawableSlider extends Drawable {
         }
     }
 
+    dispose(): void {
+        if (this.cached_texture?.source instanceof HTMLCanvasElement) {
+            this.cached_texture.source.width = 0;
+            this.cached_texture.source.height = 0;
+        }
+
+        this.cached_texture = null;
+        this.position_path = [];
+        this.render_path = [];
+        this.ticks = [];
+        this.repeats = [];
+        this.tick_entries = [];
+        this.tick_entries_by_start = [];
+    }
+
     private render_ticks(time: number): void {
         if (this.tick_entries_by_start.length === 0) return;
 

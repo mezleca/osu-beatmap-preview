@@ -37,6 +37,8 @@ export class StandardRenderer extends BaseRenderer {
     }
 
     initialize(beatmap: IBeatmap): void {
+        this.release_drawables();
+
         this.beatmap = beatmap;
         this.objects = build_render_objects(beatmap).sort((a: RenderHitObject, b: RenderHitObject) => a.time - b.time);
         this.timing_points = process_timing_points([...beatmap.TimingPoints]);
@@ -111,7 +113,7 @@ export class StandardRenderer extends BaseRenderer {
     }
 
     private create_drawables(): void {
-        this.drawables = [];
+        this.release_drawables();
         const dpr = this.config.use_high_dpi ? window.devicePixelRatio || 1 : 1;
         this.drawable_config = {
             backend: this.backend,
@@ -202,11 +204,22 @@ export class StandardRenderer extends BaseRenderer {
     }
 
     precompute(): void {
+        // avoid precomputing all slider textures on load.
+        // they are prepared lazily in render_body for visible sliders.
+    }
+
+    dispose(): void {
+        this.release_drawables();
+        this.timing_points = [];
+        this.timing_resolver = null;
+        super.dispose();
+    }
+
+    private release_drawables(): void {
         for (const drawable of this.drawables) {
-            if (drawable instanceof DrawableSlider) {
-                drawable.prepare_body_cache();
-            }
+            drawable.dispose();
         }
+        this.drawables = [];
     }
 
     private draw_approach_circle(drawable: Drawable, time: number): void {
