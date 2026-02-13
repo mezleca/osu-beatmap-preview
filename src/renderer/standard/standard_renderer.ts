@@ -19,6 +19,11 @@ import type { RenderHitObject, RenderSliderData } from "../render_types";
 import { build_render_objects } from "../render_objects";
 
 const flip_y = (y: number): number => 384 - y;
+const PRECOMPUTE_LOOKBACK_MS = 1500;
+const PRECOMPUTE_LOOKAHEAD_MS = 20000;
+const PRECOMPUTE_FRAME_BUDGET_MS = 1.5;
+const PRECOMPUTE_BOOTSTRAP_BUDGET_MS = 8;
+const MAX_SLIDER_CACHE_ENTRIES = 120;
 
 export class StandardRenderer extends BaseRenderer {
     private radius = 32;
@@ -28,6 +33,12 @@ export class StandardRenderer extends BaseRenderer {
     private timing_resolver: TimingStateResolver | null = null;
 
     private drawables: Drawable[] = [];
+    private slider_drawables: DrawableSlider[] = [];
+    private slider_cache_lru: DrawableSlider[] = [];
+    private precompute_focus_time = 0;
+    private precompute_handle: number | null = null;
+    private precompute_pause_until = 0;
+    private last_seek_prefetch_at = 0;
     private drawable_config!: DrawableConfig;
     private follow_point_renderer: FollowPointRenderer;
 
@@ -140,13 +151,19 @@ export class StandardRenderer extends BaseRenderer {
                 const timing_state = this.timing_resolver?.get_state_at(obj.time) ?? { base_beat_length: 600, sv_multiplier: 1 };
                 const { tick_distance, min_distance_from_end } = calculate_tick_spacing(this.beatmap, timing_state);
 
-                this.drawables.push(new DrawableSlider(obj, this.drawable_config, path, span_duration, tick_distance, min_distance_from_end));
+                const slider = new DrawableSlider(obj, this.drawable_config, path, span_duration, tick_distance, min_distance_from_end);
+                this.drawables.push(slider);
+                this.slider_drawables.push(slider);
             }
         }
     }
 
     render(time: number): void {
         const { backend, config } = this;
+        this.precompute_focus_time = time;
+        if (performance.now() >= this.precompute_pause_until) {
+            this.process_precompute_queue(time, PRECOMPUTE_FRAME_BUDGET_MS, false);
+        }
 
         this.render_background();
         backend.save();
@@ -180,6 +197,10 @@ export class StandardRenderer extends BaseRenderer {
 
         for (const drawable of visible_drawables) {
             if (drawable instanceof DrawableSlider) {
+                if (!drawable.has_body_cache()) {
+                    drawable.prepare_body_cache();
+                }
+                this.touch_slider_cache(drawable);
                 drawable.render_body_pass(time);
             }
         }
@@ -203,12 +224,27 @@ export class StandardRenderer extends BaseRenderer {
         backend.restore();
     }
 
-    precompute(): void {
-        // avoid precomputing all slider textures on load.
-        // they are prepared lazily in render_body for visible sliders.
+    precompute(start_time: number = 0): void {
+        this.precompute_focus_time = start_time;
+        this.process_precompute_queue(start_time, PRECOMPUTE_BOOTSTRAP_BUDGET_MS, true);
+        this.start_precompute_loop();
+    }
+
+    on_seek(time: number): void {
+        this.precompute_focus_time = time;
+        this.precompute_pause_until = performance.now() + 90;
+
+        const now = performance.now();
+        if (now - this.last_seek_prefetch_at < 48) {
+            return;
+        }
+
+        this.last_seek_prefetch_at = now;
+        this.process_precompute_queue(time, 2.5, false);
     }
 
     dispose(): void {
+        this.stop_precompute_loop();
         this.release_drawables();
         this.timing_points = [];
         this.timing_resolver = null;
@@ -216,10 +252,122 @@ export class StandardRenderer extends BaseRenderer {
     }
 
     private release_drawables(): void {
+        this.stop_precompute_loop();
         for (const drawable of this.drawables) {
             drawable.dispose();
         }
         this.drawables = [];
+        this.slider_drawables = [];
+        this.slider_cache_lru = [];
+    }
+
+    private start_precompute_loop(): void {
+        if (this.precompute_handle !== null) {
+            return;
+        }
+
+        const step = () => {
+            this.precompute_handle = null;
+
+            if (!this.has_uncached_sliders()) {
+                return;
+            }
+
+            this.process_precompute_queue(this.precompute_focus_time, PRECOMPUTE_FRAME_BUDGET_MS, false);
+            this.precompute_handle = window.requestAnimationFrame(step);
+        };
+
+        this.precompute_handle = window.requestAnimationFrame(step);
+    }
+
+    private stop_precompute_loop(): void {
+        if (this.precompute_handle !== null) {
+            window.cancelAnimationFrame(this.precompute_handle);
+            this.precompute_handle = null;
+        }
+    }
+
+    private has_uncached_sliders(): boolean {
+        for (const slider of this.slider_drawables) {
+            if (!slider.has_body_cache()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private process_precompute_queue(focus_time: number, budget_ms: number, prefer_complex: boolean): void {
+        if (this.slider_drawables.length == 0) {
+            return;
+        }
+
+        const deadline = performance.now() + budget_ms;
+
+        while (performance.now() < deadline) {
+            const slider = this.pick_next_slider_for_precompute(focus_time, prefer_complex);
+            if (!slider) {
+                break;
+            }
+
+            slider.prepare_body_cache();
+            this.touch_slider_cache(slider);
+            this.enforce_slider_cache_limit();
+        }
+    }
+
+    private pick_next_slider_for_precompute(focus_time: number, prefer_complex: boolean): DrawableSlider | null {
+        let selected: DrawableSlider | null = null;
+        let best_score = -Infinity;
+
+        for (const slider of this.slider_drawables) {
+            if (slider.has_body_cache()) {
+                continue;
+            }
+
+            const delta = slider.start_time - focus_time;
+            const in_window = delta >= -PRECOMPUTE_LOOKBACK_MS && delta <= PRECOMPUTE_LOOKAHEAD_MS;
+            const complexity = slider.estimate_complexity();
+
+            if (in_window) {
+                // Prioritize expensive sliders that are about to show up.
+                const distance_penalty = Math.abs(delta) * 0.02;
+                const score = complexity - distance_penalty;
+                if (score > best_score) {
+                    best_score = score;
+                    selected = slider;
+                }
+            } else if (selected == null && prefer_complex) {
+                if (complexity > best_score) {
+                    best_score = complexity;
+                    selected = slider;
+                }
+            }
+        }
+
+        return selected;
+    }
+
+    private touch_slider_cache(slider: DrawableSlider): void {
+        if (!slider.has_body_cache()) {
+            return;
+        }
+
+        const index = this.slider_cache_lru.indexOf(slider);
+        if (index >= 0) {
+            this.slider_cache_lru.splice(index, 1);
+        }
+
+        this.slider_cache_lru.push(slider);
+    }
+
+    private enforce_slider_cache_limit(): void {
+        while (this.slider_cache_lru.length > MAX_SLIDER_CACHE_ENTRIES) {
+            const victim = this.slider_cache_lru.shift();
+            if (!victim) {
+                break;
+            }
+            victim.release_body_cache();
+        }
     }
 
     private draw_approach_circle(drawable: Drawable, time: number): void {

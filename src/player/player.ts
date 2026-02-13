@@ -458,7 +458,13 @@ export class BeatmapPlayer {
             await this.audio_context.resume();
         }
 
-        this.audio.play(Math.max(0, this.start_offset + this.audio_offset));
+        try {
+            await this.audio.play(Math.max(0, this.start_offset + this.audio_offset));
+        } catch (e) {
+            console.warn("[BeatmapPlayer] Failed to start audio", e);
+            this.emit("statechange", false);
+            return;
+        }
         this.video?.play();
         this.start_render_loop();
         this.emit("play");
@@ -505,6 +511,7 @@ export class BeatmapPlayer {
 
         // render frame at new position
         this.render_frame(this.start_offset);
+        this.renderer?.on_seek(this.start_offset);
     }
 
     async set_difficulty(index: number | string): Promise<Result<IBeatmapResources>> {

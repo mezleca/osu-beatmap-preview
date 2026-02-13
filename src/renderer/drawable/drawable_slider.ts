@@ -319,13 +319,25 @@ export class DrawableSlider extends Drawable {
         }
     }
 
-    dispose(): void {
+    has_body_cache(): boolean {
+        return this.cached_texture != null;
+    }
+
+    release_body_cache(): void {
         if (this.cached_texture?.source instanceof HTMLCanvasElement) {
             this.cached_texture.source.width = 0;
             this.cached_texture.source.height = 0;
         }
-
         this.cached_texture = null;
+    }
+
+    estimate_complexity(): number {
+        // heuristic score: longer sampled paths + many ticks/repeats are costly to rasterize
+        return this.render_path.length + this.ticks.length * 8 + this.repeats.length * 16;
+    }
+
+    dispose(): void {
+        this.release_body_cache();
         this.position_path = [];
         this.render_path = [];
         this.ticks = [];

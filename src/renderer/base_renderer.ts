@@ -85,7 +85,8 @@ export abstract class BaseRenderer {
     // update mods and recalculate difficulty attributes
     abstract set_mods(mods: number): void;
 
-    precompute(): void {}
+    precompute(start_time: number = 0): void {}
+    on_seek(time: number): void {}
 
     dispose(): void {
         this.objects = [];
