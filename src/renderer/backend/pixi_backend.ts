@@ -1,17 +1,15 @@
 import {
     Application,
-    BaseTexture,
-    BLEND_MODES,
     Container,
     Graphics,
     Matrix,
     Rectangle,
-    SCALE_MODES,
-    settings,
     Sprite,
     Texture,
+    TextureStyle,
     type ICanvas
 } from "pixi.js";
+import type { BLEND_MODES } from "pixi.js";
 import type { CompositeOperation, GradientStop, IRenderBackend, LineCap, LineJoin, RenderImage, TextAlign, TextBaseline } from "./render_backend";
 
 type PathCommand =
@@ -77,7 +75,7 @@ export class PixiBackend implements IRenderBackend {
         return this._height;
     }
 
-    initialize(container: HTMLCanvasElement, use_high_dpi: boolean = true): void {
+    async initialize(container: HTMLCanvasElement, use_high_dpi: boolean = true): Promise<void> {
         this.dispose();
 
         this.ensure_sprite_texture_limit();
@@ -86,8 +84,9 @@ export class PixiBackend implements IRenderBackend {
         const display_width = container.clientWidth || container.width;
         const display_height = container.clientHeight || container.height;
 
-        this.app = new Application({
-            view: container as unknown as ICanvas,
+        const app = new Application();
+        await app.init({
+            canvas: container as unknown as ICanvas,
             width: display_width,
             height: display_height,
             backgroundAlpha: 0,
@@ -96,10 +95,11 @@ export class PixiBackend implements IRenderBackend {
             resolution: this._dpr,
             clearBeforeRender: true
         });
-        this.app.ticker.stop();
-        BaseTexture.defaultOptions.scaleMode = SCALE_MODES.LINEAR;
+        app.ticker.stop();
+        this.app = app;
+        TextureStyle.defaultOptions.scaleMode = "linear";
 
-        const view = this.app.view as HTMLCanvasElement;
+        const view = this.app.canvas as HTMLCanvasElement;
         this.context_lost_listener = (event: Event): void => {
             event.preventDefault();
         };
@@ -159,14 +159,14 @@ export class PixiBackend implements IRenderBackend {
         this.clear_texture_caches();
 
         if (this.app) {
-            const view = this.app.view as HTMLCanvasElement;
+            const view = this.app.canvas as HTMLCanvasElement;
             if (this.context_lost_listener) {
                 view.removeEventListener("webglcontextlost", this.context_lost_listener);
             }
             if (this.context_restored_listener) {
                 view.removeEventListener("webglcontextrestored", this.context_restored_listener);
             }
-            this.app.destroy(false, { children: true, texture: true, baseTexture: true });
+            this.app.destroy(false, { children: true, texture: true, textureSource: true });
             this.app = null;
         }
 
@@ -182,18 +182,18 @@ export class PixiBackend implements IRenderBackend {
         const fill = parse_color(fill_color);
         const stroke = parse_color(stroke_color);
 
-        if (fill_color && fill_color !== "transparent") {
-            g.beginFill(fill.color, fill.alpha * this.state.alpha);
+        g.circle(x, y, radius);
+
+        if (fill_color && fill_color !== "transparent" && fill.alpha > 0) {
+            g.fill({ color: fill.color, alpha: fill.alpha * this.state.alpha });
         }
 
-        if (stroke_color && stroke_width && stroke_width > 0) {
-            g.lineStyle(stroke_width, stroke.color, stroke.alpha * this.state.alpha);
-        }
-
-        g.drawCircle(x, y, radius);
-
-        if (fill_color && fill_color !== "transparent") {
-            g.endFill();
+        if (stroke_color && stroke_width && stroke_width > 0 && stroke.alpha > 0) {
+            g.stroke({
+                width: stroke_width,
+                color: stroke.color,
+                alpha: stroke.alpha * this.state.alpha
+            });
         }
     }
 
@@ -209,16 +209,19 @@ export class PixiBackend implements IRenderBackend {
     ): void {
         const g = this.make_graphics();
         const stroke = parse_color(stroke_color);
-        g.lineStyle(stroke_width, stroke.color, stroke.alpha * this.state.alpha);
         g.arc(x, y, radius, start_angle, end_angle, ccw);
+        g.stroke({
+            width: stroke_width,
+            color: stroke.color,
+            alpha: stroke.alpha * this.state.alpha
+        });
     }
 
     draw_rect(x: number, y: number, width: number, height: number, fill_color: string): void {
         const g = this.make_graphics();
         const fill = parse_color(fill_color);
-        g.beginFill(fill.color, fill.alpha * this.state.alpha);
-        g.drawRect(x, y, width, height);
-        g.endFill();
+        g.rect(x, y, width, height);
+        g.fill({ color: fill.color, alpha: fill.alpha * this.state.alpha });
     }
 
     draw_rect_gradient(x: number, y: number, width: number, height: number, gradient: LinearGradient): void {
@@ -226,7 +229,7 @@ export class PixiBackend implements IRenderBackend {
         const sprite = new Sprite(texture);
         sprite.alpha = this.state.alpha;
         sprite.blendMode = this.state.blend_mode;
-        sprite.transform.setFromMatrix(this.compose_matrix(x, y, width / texture.width, height / texture.height));
+        sprite.setFromMatrix(this.compose_matrix(x, y, width / texture.width, height / texture.height));
         this.state.container.addChild(sprite);
     }
 
@@ -281,7 +284,7 @@ export class PixiBackend implements IRenderBackend {
         }
 
         sprite.anchor.set(anchor_x, anchor_y);
-        sprite.transform.setFromMatrix(this.compose_matrix(x, y, 1 / cached.resolution, 1 / cached.resolution));
+        sprite.setFromMatrix(this.compose_matrix(x, y, 1 / cached.resolution, 1 / cached.resolution));
         this.state.container.addChild(sprite);
     }
 
@@ -300,9 +303,13 @@ export class PixiBackend implements IRenderBackend {
     draw_line(x0: number, y0: number, x1: number, y1: number, color: string, width: number): void {
         const g = this.make_graphics();
         const stroke = parse_color(color);
-        g.lineStyle(width, stroke.color, stroke.alpha * this.state.alpha);
         g.moveTo(x0, y0);
         g.lineTo(x1, y1);
+        g.stroke({
+            width,
+            color: stroke.color,
+            alpha: stroke.alpha * this.state.alpha
+        });
     }
 
     bezier_curve_to(cp1x: number, cp1y: number, cp2x: number, cp2y: number, x: number, y: number): void {
@@ -363,16 +370,19 @@ export class PixiBackend implements IRenderBackend {
     stroke_path(color: string, width: number, _cap: LineCap = "butt", _join: LineJoin = "miter"): void {
         const g = this.make_graphics();
         const stroke = parse_color(color);
-        g.lineStyle(width, stroke.color, stroke.alpha * this.state.alpha);
         this.apply_path(g, this.state.path);
+        g.stroke({
+            width,
+            color: stroke.color,
+            alpha: stroke.alpha * this.state.alpha
+        });
     }
 
     fill_path(color: string): void {
         const g = this.make_graphics();
         const fill = parse_color(color);
-        g.beginFill(fill.color, fill.alpha * this.state.alpha);
         this.apply_path(g, this.state.path);
-        g.endFill();
+        g.fill({ color: fill.color, alpha: fill.alpha * this.state.alpha });
     }
 
     close_path(): void {
@@ -429,16 +439,16 @@ export class PixiBackend implements IRenderBackend {
     set_blend_mode(mode: "normal" | "lighter" | "multiply" | "screen"): void {
         switch (mode) {
             case "lighter":
-                this.state.blend_mode = BLEND_MODES.ADD;
+                this.state.blend_mode = "add";
                 return;
             case "multiply":
-                this.state.blend_mode = BLEND_MODES.MULTIPLY;
+                this.state.blend_mode = "multiply";
                 return;
             case "screen":
-                this.state.blend_mode = BLEND_MODES.SCREEN;
+                this.state.blend_mode = "screen";
                 return;
             default:
-                this.state.blend_mode = BLEND_MODES.NORMAL;
+                this.state.blend_mode = "normal";
                 return;
         }
     }
@@ -463,7 +473,7 @@ export class PixiBackend implements IRenderBackend {
         const target_height = height ?? image.height ?? texture.height;
         const scale_x = target_width / Math.max(1, texture.width);
         const scale_y = target_height / Math.max(1, texture.height);
-        sprite.transform.setFromMatrix(this.compose_matrix(x, y, scale_x, scale_y));
+        sprite.setFromMatrix(this.compose_matrix(x, y, scale_x, scale_y));
         this.state.container.addChild(sprite);
     }
 
@@ -473,11 +483,14 @@ export class PixiBackend implements IRenderBackend {
             return;
         }
 
-        const part = new Texture(texture.baseTexture, new Rectangle(sx, sy, sw, sh));
+        const part = new Texture({
+            source: texture.source,
+            frame: new Rectangle(sx, sy, sw, sh)
+        });
         const sprite = new Sprite(part);
         sprite.alpha = this.state.alpha;
         sprite.blendMode = this.state.blend_mode;
-        sprite.transform.setFromMatrix(this.compose_matrix(dx, dy, dw / Math.max(1, sw), dh / Math.max(1, sh)));
+        sprite.setFromMatrix(this.compose_matrix(dx, dy, dw / Math.max(1, sw), dh / Math.max(1, sh)));
         this.state.container.addChild(sprite);
     }
 
@@ -659,7 +672,7 @@ export class PixiBackend implements IRenderBackend {
         this.state = {
             matrix: new Matrix(),
             alpha: 1,
-            blend_mode: BLEND_MODES.NORMAL,
+            blend_mode: "normal",
             container: this.root,
             path: []
         };
@@ -669,7 +682,7 @@ export class PixiBackend implements IRenderBackend {
     private make_graphics(): Graphics {
         const g = new Graphics();
         g.blendMode = this.state.blend_mode;
-        g.transform.setFromMatrix(this.state.matrix);
+        g.setFromMatrix(this.state.matrix);
         this.state.container.addChild(g);
         return g;
     }
@@ -688,7 +701,7 @@ export class PixiBackend implements IRenderBackend {
                     g.arc(command.x, command.y, command.radius, command.start, command.end, command.ccw);
                     break;
                 case "rect":
-                    g.drawRect(command.x, command.y, command.width, command.height);
+                    g.rect(command.x, command.y, command.width, command.height);
                     break;
                 case "close":
                     g.closePath();
@@ -849,11 +862,7 @@ export class PixiBackend implements IRenderBackend {
         this.text_texture_cache.clear();
     }
 
-    private ensure_sprite_texture_limit(): void {
-        if ((settings.SPRITE_MAX_TEXTURES as number) <= 0) {
-            settings.SPRITE_MAX_TEXTURES = 16;
-        }
-    }
+    private ensure_sprite_texture_limit(): void {}
 }
 
 const parse_font = (font: string): { css: string; size: number } => {
@@ -1084,12 +1093,12 @@ const clamp_byte = (value: number): number => {
 const composite_to_blend = (mode: CompositeOperation): BLEND_MODES => {
     switch (mode) {
         case "lighter":
-            return BLEND_MODES.ADD;
+            return "add";
         case "multiply":
-            return BLEND_MODES.MULTIPLY;
+            return "multiply";
         case "screen":
-            return BLEND_MODES.SCREEN;
+            return "screen";
         default:
-            return BLEND_MODES.NORMAL;
+            return "normal";
     }
 };

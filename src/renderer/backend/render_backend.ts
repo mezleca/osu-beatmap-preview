@@ -44,7 +44,7 @@ export interface GradientStop {
 }
 
 export interface IRenderBackend {
-    initialize(container: any, use_high_dpi?: boolean): void;
+    initialize(container: any, use_high_dpi?: boolean): Promise<void>;
     resize(width: number, height: number): void;
     clear(): void;
     dispose(): void;

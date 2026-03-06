@@ -75,6 +75,8 @@ export interface IPlayerOptions {
 
 export class BeatmapPlayer {
     private backend: IRenderBackend;
+    private backend_ready: Promise<void>;
+    private backend_initialized = false;
     private renderer: BaseRenderer | null = null;
 
     private audio_context: AudioContext;
@@ -147,7 +149,9 @@ export class BeatmapPlayer {
         this.hitsound_volume = options.hitsound_volume ?? 0.25;
         this.audio_offset = options.audio_offset ?? 20;
 
-        this.backend.initialize(options.canvas, this.renderer_config.use_high_dpi);
+        this.backend_ready = this.backend.initialize(options.canvas, this.renderer_config.use_high_dpi).then(() => {
+            this.backend_initialized = true;
+        });
 
         const audio_context_class =
             window.AudioContext ??
@@ -316,6 +320,14 @@ export class BeatmapPlayer {
     private async setup(): Promise<Result<IBeatmapResources>> {
         if (!this.resources) {
             return err(ErrorCode.NotLoaded, "No resources loaded");
+        }
+
+        try {
+            await this.backend_ready;
+        } catch (e) {
+            const reason = e instanceof Error ? e.message : String(e);
+            this.emit("error", ErrorCode.Unknown, reason);
+            return err(ErrorCode.Unknown, reason);
         }
 
         const { beatmap } = this.resources;
@@ -977,6 +989,10 @@ export class BeatmapPlayer {
     }
 
     private render_frame(time: number): void {
+        if (!this.backend_initialized) {
+            return;
+        }
+
         this.backend.begin_frame?.();
         this.backend.clear();
         this.renderer?.render(time);
