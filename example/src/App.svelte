@@ -33,6 +33,7 @@
     let custom_rate = 1;
     let custom_rate_enabled = false;
     let effective_rate = 1;
+    let volume = 0.5;
 
     let current_mode: GameModeType = "standard";
     let available_mods: IModInfo[] = get_available_mods("standard");
@@ -176,7 +177,8 @@
             canvas,
             mods: active_mods,
             start_mode: "preview",
-            volume: 0.25,
+            volume: volume,
+            hitsound_volume: volume * 0.4,
             playfield_scale: 0.9,
             auto_resize: true,
             enable_fps_counter: true
@@ -327,6 +329,11 @@
         await player.set_difficulty(value);
     };
 
+    $: {
+        player?.set_volume(volume);
+        player?.set_hitsound_volume(1);
+    }
+
     onMount(() => {
         resize_canvas();
 
@@ -421,10 +428,10 @@
                 </button>
             {/each}
         </div>
-        <div class="rate-control">
-            <span class="rate-label">Rate {effective_rate.toFixed(2)}x</span>
+        <div class="control">
+            <span class="label">Rate {effective_rate.toFixed(2)}x</span>
             <input
-                class="rate-slider"
+                class="slider"
                 type="range"
                 min="0.5"
                 max="2"
@@ -434,6 +441,11 @@
                 disabled={!is_loaded}
                 aria-label="Playback rate"
             />
+        </div>
+
+        <div class="control">
+            <span class="label">Volume {volume * 100}%</span>
+            <input class="slider" type="range" min="0" max="1" step="0.01" bind:value={volume} aria-label="Volume" />
         </div>
     </div>
 </div>
@@ -620,14 +632,14 @@
         color: #fff;
     }
 
-    .rate-control {
+    .control {
         display: flex;
         align-items: center;
         gap: 8px;
         min-width: 170px;
     }
 
-    .rate-label {
+    .label {
         font-size: 11px;
         color: #b9bfcc;
         min-width: 70px;
@@ -635,7 +647,7 @@
         font-variant-numeric: tabular-nums;
     }
 
-    .rate-slider {
+    .slider {
         width: 100px;
         accent-color: #5865f2;
     }

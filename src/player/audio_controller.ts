@@ -2,6 +2,7 @@ import { AudioNodeController } from "./audio_node_controller";
 
 export class AudioController extends AudioNodeController {
     private media_element: HTMLAudioElement | null = null;
+    private media_source: MediaElementAudioSourceNode | null = null;
     private media_url: string | null = null;
 
     private _is_playing: boolean = false;
@@ -9,6 +10,8 @@ export class AudioController extends AudioNodeController {
     private _duration: number = 0;
     private pause_time: number = 0;
     private speed: number = 1;
+    private started_at_context_time: number = 0;
+    private started_from_time: number = 0;
 
     constructor(context: AudioContext) {
         super(context);
@@ -35,12 +38,25 @@ export class AudioController extends AudioNodeController {
             return this.pause_time;
         }
 
+        if (!this._is_playing) {
+            return this.pause_time;
+        }
+
+        const elapsed_ms = (this.audio_context.currentTime - this.started_at_context_time) * 1000 * this.speed;
+        let estimated = this.started_from_time + elapsed_ms;
         const media_time = Math.max(0, this.media_element.currentTime * 1000);
-        if (media_time >= this._duration) {
+
+        if (Math.abs(media_time - estimated) > 40) {
+            estimated = media_time;
+            this.started_from_time = media_time;
+            this.started_at_context_time = this.audio_context.currentTime;
+        }
+
+        if (estimated >= this._duration) {
             return this._duration;
         }
 
-        return media_time;
+        return Math.max(0, estimated);
     }
 
     async load(data: ArrayBuffer, speed_multiplier: number = 1): Promise<void> {
@@ -51,6 +67,8 @@ export class AudioController extends AudioNodeController {
         await this.load_media_element(data);
         this._is_loaded = true;
         this.pause_time = 0;
+        this.started_at_context_time = 0;
+        this.started_from_time = 0;
     }
 
     async play(from_time?: number): Promise<void> {
@@ -64,6 +82,8 @@ export class AudioController extends AudioNodeController {
         this.media_element.currentTime = clamped_start / 1000;
         this.media_element.playbackRate = this.speed;
         this.pause_time = clamped_start;
+        this.started_from_time = clamped_start;
+        this.started_at_context_time = this.audio_context.currentTime;
 
         try {
             await this.media_element.play();
@@ -82,7 +102,7 @@ export class AudioController extends AudioNodeController {
 
         if (this.media_element) {
             this.media_element.pause();
-            this.pause_time = Math.max(0, this.media_element.currentTime * 1000);
+            this.pause_time = this.current_time;
         }
 
         this._is_playing = false;
@@ -95,6 +115,11 @@ export class AudioController extends AudioNodeController {
         if (this.media_element) {
             this.media_element.currentTime = clamped / 1000;
         }
+
+        if (this._is_playing) {
+            this.started_from_time = clamped;
+            this.started_at_context_time = this.audio_context.currentTime;
+        }
     }
 
     stop(): void {
@@ -105,6 +130,8 @@ export class AudioController extends AudioNodeController {
 
         this._is_playing = false;
         this.pause_time = 0;
+        this.started_at_context_time = 0;
+        this.started_from_time = 0;
     }
 
     get_host_time(time_ms: number): number {
@@ -113,14 +140,22 @@ export class AudioController extends AudioNodeController {
     }
 
     set_speed(speed: number): void {
+        const current = this.current_time;
         this.speed = Math.max(0.1, speed);
 
         if (this.media_element) {
             this.media_element.playbackRate = this.speed;
         }
 
-        if (!this._is_playing) {
-            this.pause_time = this.current_time;
+        this.started_from_time = current;
+        this.started_at_context_time = this.audio_context.currentTime;
+        this.pause_time = current;
+    }
+
+    override set_volume(volume: number): void {
+        super.set_volume(volume);
+        if (this.media_element) {
+            this.media_element.volume = 1;
         }
     }
 
@@ -131,6 +166,8 @@ export class AudioController extends AudioNodeController {
         this._duration = 0;
         this.pause_time = 0;
         this._is_playing = false;
+        this.started_at_context_time = 0;
+        this.started_from_time = 0;
 
         this.dispose_audio_node();
     }
@@ -144,6 +181,7 @@ export class AudioController extends AudioNodeController {
         media.preload = "metadata";
         media.src = url;
         media.playbackRate = this.speed;
+        media.volume = 1;
 
         await new Promise<void>((resolve, reject) => {
             let settled = false;
@@ -183,11 +221,18 @@ export class AudioController extends AudioNodeController {
         };
 
         this.media_element = media;
+        this.media_source = this.audio_context.createMediaElementSource(media);
+        this.media_source.connect(this.gain_node);
         this.media_url = url;
         this._duration = Math.max(0, (media.duration || 0) * 1000);
     }
 
     private release_media(): void {
+        if (this.media_source) {
+            this.media_source.disconnect();
+            this.media_source = null;
+        }
+
         if (this.media_element) {
             this.media_element.onended = null;
             this.media_element.onerror = null;
