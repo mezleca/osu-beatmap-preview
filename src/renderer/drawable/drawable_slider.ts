@@ -15,7 +15,7 @@ const ARROW_MOVE_IN_DURATION = 250;
 const ARROW_TOTAL_CYCLE = 300;
 const TICK_ANIM_DURATION = 150;
 const TICK_SCALE_DURATION = TICK_ANIM_DURATION * 4;
-const SLIDER_ENDPOINT_SCALE = 1.0;
+const SLIDER_ENDPOINT_SCALE = 0.96;
 
 type TickEntry = {
     tick: SliderTickEvent;

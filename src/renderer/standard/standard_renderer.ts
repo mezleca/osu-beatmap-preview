@@ -381,10 +381,6 @@ export class StandardRenderer extends BaseRenderer {
     precompute(start_time: number = 0): void {
         this.precompute_focus_time = start_time;
         this.process_precompute_queue(start_time, STANDARD_RUNTIME_DEFAULTS.precompute.bootstrap_budget_ms, true);
-        const bootstrap_deadline = performance.now() + STANDARD_RUNTIME_DEFAULTS.precompute.bootstrap_total_ms;
-        while (performance.now() < bootstrap_deadline && this.has_uncached_sliders()) {
-            this.process_precompute_queue(start_time, STANDARD_RUNTIME_DEFAULTS.precompute.bootstrap_budget_ms, false);
-        }
         this.start_precompute_loop();
     }
 

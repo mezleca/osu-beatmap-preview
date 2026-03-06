@@ -20,14 +20,14 @@ import { TimingStateResolver } from "../renderer/standard/timing_state";
 import { PlayerHitsoundScheduler } from "./player_hitsound";
 import { collect_map_custom_hitsound_files } from "./hitsound_file_collector";
 import { load_beatmap_skin, type StandardSkinElements } from "../skin/skin_elements";
-import { get_default_skin_folder_manifest_url, resolve_default_skin_folder_asset_url } from "../assets/assets";
+import { get_default_skin_folder_base_urls, resolve_default_skin_folder_asset_url } from "../assets/assets";
 import { convert_skin_files, load_default_skin_folder_files, load_skin_osk_files, merge_hitsound_sources, merge_skin_sources } from "./player_skin";
 
 const PREVIEW_FALLBACK_RATIO = 0.42;
 const RESYNC_THRESHOLD_MS = 30;
 const DEBUG_SYNC_EMIT_INTERVAL_MS = 100;
 const DEFAULT_HITSOUND_LOOKAHEAD_MS = 100;
-const DEFAULT_SKIN_FOLDER_MANIFEST_URL = get_default_skin_folder_manifest_url();
+const DEFAULT_SKIN_FOLDER_BASE_URLS = get_default_skin_folder_base_urls();
 
 type PlayerEventMap = {
     timeupdate: [time: number, duration: number];
@@ -102,7 +102,7 @@ export class BeatmapPlayer {
     private loaded_skin_elements: StandardSkinElements | null = null;
     private loaded_skin_dispose: (() => void) | null = null;
     private should_load_default_skin = true;
-    private default_skin_folder_manifest_url: string = DEFAULT_SKIN_FOLDER_MANIFEST_URL;
+    private default_skin_folder_base_urls: string[] = DEFAULT_SKIN_FOLDER_BASE_URLS;
     private default_skin_files: Map<string, ArrayBuffer> | null = null;
     private default_skin_loading: Promise<void> | null = null;
     private custom_skin_files: Map<string, ArrayBuffer> | null = null;
@@ -798,7 +798,7 @@ export class BeatmapPlayer {
 
     private async load_default_skin_folder_files(): Promise<Map<string, ArrayBuffer> | null> {
         try {
-            return load_default_skin_folder_files(this.default_skin_folder_manifest_url, resolve_default_skin_folder_asset_url);
+            return load_default_skin_folder_files(this.default_skin_folder_base_urls, resolve_default_skin_folder_asset_url);
         } catch {
             return null;
         }

@@ -604,11 +604,11 @@ export class PixiBackend implements IRenderBackend {
             ctx.stroke();
         };
 
-        const accent: ParsedColor = { color: body.color, alpha: 0.58 * body_opacity };
+        const accent: ParsedColor = { color: body.color, alpha: 0.5 * body_opacity };
         const border_colour: ParsedColor = { color: border.color, alpha: border.alpha * border_opacity };
         const shadow: ParsedColor = { color: 0x000000, alpha: 0.25 * border_opacity };
         const outer_colour = darken_legacy(accent, 0.1);
-        const inner_colour = lighten_legacy(accent, 0.3);
+        const inner_colour = lighten_legacy(accent, 0.22);
 
         const shadow_portion = 0.078125;
         const border_portion = 0.1875;
@@ -625,7 +625,7 @@ export class PixiBackend implements IRenderBackend {
             }
 
             const t = (p - border_portion) / Math.max(1e-6, 1 - border_portion);
-            const biased_t = Math.pow(clamp_unit(t), 1.25);
+            const biased_t = Math.pow(clamp_unit(t), 1.35);
             return mix_color(outer_colour, inner_colour, biased_t);
         };
 

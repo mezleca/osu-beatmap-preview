@@ -79,51 +79,58 @@ export const merge_hitsound_sources = (
 };
 
 export const load_default_skin_folder_files = async (
-    manifest_url: string,
-    resolve_asset_url: (name: string) => string
+    base_urls: string[],
+    resolve_asset_url: (name: string, base_url?: string) => string
 ): Promise<Map<string, ArrayBuffer> | null> => {
-    try {
-        const manifest_response = await fetch(manifest_url);
-        if (!manifest_response.ok) {
-            return null;
-        }
+    for (let base_index = 0; base_index < base_urls.length; base_index++) {
+        const base_url = base_urls[base_index];
+        try {
+            const manifest_response = await fetch(resolve_asset_url("manifest.json", base_url));
+            if (!manifest_response.ok) {
+                continue;
+            }
 
-        const manifest = (await manifest_response.json()) as string[];
-        if (!Array.isArray(manifest) || manifest.length === 0) {
-            return null;
-        }
+            const manifest = (await manifest_response.json()) as string[];
+            if (!Array.isArray(manifest) || manifest.length === 0) {
+                continue;
+            }
 
-        const files = new Map<string, ArrayBuffer>();
-        const targets = manifest.filter((name) => !!name && !name.endsWith("/"));
-        const batch_size = 24;
+            const files = new Map<string, ArrayBuffer>();
+            const targets = manifest.filter((name) => !!name && !name.endsWith("/"));
+            const batch_size = 24;
 
-        for (let i = 0; i < targets.length; i += batch_size) {
-            const batch = targets.slice(i, i + batch_size);
-            const loaded = await Promise.all(
-                batch.map(async (name) => {
-                    try {
-                        const response = await fetch(resolve_asset_url(name));
-                        if (!response.ok) {
+            for (let i = 0; i < targets.length; i += batch_size) {
+                const batch = targets.slice(i, i + batch_size);
+                const loaded = await Promise.all(
+                    batch.map(async (name) => {
+                        try {
+                            const response = await fetch(resolve_asset_url(name, base_url));
+                            if (!response.ok) {
+                                return null;
+                            }
+                            return { name, data: await response.arrayBuffer() };
+                        } catch {
                             return null;
                         }
-                        return { name, data: await response.arrayBuffer() };
-                    } catch {
-                        return null;
+                    })
+                );
+
+                for (let j = 0; j < loaded.length; j++) {
+                    const entry = loaded[j];
+                    if (!entry) {
+                        continue;
                     }
-                })
-            );
-
-            for (let j = 0; j < loaded.length; j++) {
-                const entry = loaded[j];
-                if (!entry) {
-                    continue;
+                    files.set(entry.name, entry.data);
                 }
-                files.set(entry.name, entry.data);
             }
-        }
 
-        return files.size > 0 ? files : null;
-    } catch {
-        return null;
+            if (files.size > 0) {
+                return files;
+            }
+        } catch {
+            continue;
+        }
     }
+
+    return null;
 };
