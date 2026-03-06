@@ -629,10 +629,11 @@ export class PixiBackend implements IRenderBackend {
             return mix_color(outer_colour, inner_colour, biased_t);
         };
 
-        const path_complexity = Math.max(1, Math.floor(path.length / 120));
-        const steps = Math.max(38, Math.min(62, Math.floor(58 / path_complexity)));
+        const path_complexity = Math.max(1, Math.floor(path.length / 140));
+        const steps = Math.max(52, Math.min(76, Math.floor(72 / path_complexity)));
         ctx.globalAlpha = 1;
-        for (let i = steps; i >= 1; i--) {
+        ctx.globalCompositeOperation = "source-over";
+        for (let i = 1; i <= steps; i++) {
             const t = i / steps;
             const width = radius * 2 * t;
             const position = 1 - t;
@@ -641,7 +642,11 @@ export class PixiBackend implements IRenderBackend {
             ctx.strokeStyle = to_canvas_rgba(color);
             ctx.lineWidth = Math.max(0.5, width);
             stroke_path();
+            if (i === 1) {
+                ctx.globalCompositeOperation = "destination-over";
+            }
         }
+        ctx.globalCompositeOperation = "source-over";
         ctx.restore();
         return Texture.from(canvas);
     }

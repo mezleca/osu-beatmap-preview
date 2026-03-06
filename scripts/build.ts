@@ -1,4 +1,4 @@
-import { rmSync, mkdirSync, cpSync } from "fs";
+import { rmSync, mkdirSync } from "fs";
 
 const OUT_DIR = "./dist";
 
@@ -42,15 +42,6 @@ const OUT_DIR = "./dist";
     }
 
     await tsc.exited;
-
-    try {
-        cpSync("./src/assets", "./dist/assets", {
-            recursive: true,
-            filter: (path) => !path.endsWith(".ts") && !path.endsWith(".d.ts")
-        });
-    } catch (error) {
-        console.warn("[warn] failed to copy runtime assets to dist/assets", error);
-    }
 
     console.log("build complete!");
     console.log(

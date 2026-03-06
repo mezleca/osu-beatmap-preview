@@ -21,16 +21,16 @@
         "update:major": "bun run format && npm version major && git push --follow-tags",
         "dev": "bun run --watch src/index.ts",
         "example:build": "cd example && bun run build",
-        "build": "bun run scripts/build.ts",
-        "lint": "eslint src tests scripts --ext .ts,.js --max-warnings=0",
+        "build": "bun run generate:skin && bun run scripts/build.ts",
+        "lint": "bun run generate:skin && eslint src tests scripts --ext .ts,.js --max-warnings=0",
         "test": "bun test",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
-        "type-check": "tsc --noEmit -p src/tsconfig.json",
-        "check": "bun run format:check && bun run lint && bun run test && bun run type-check",
+        "type-check": "bun run generate:skin && tsc --noEmit -p src/tsconfig.json",
+        "check": "bun run generate:skin && bun run format:check && bun run lint && bun run test && bun run type-check",
         "ci": "bun run check && bun run build && bun run example:build",
-        "example": "cd example && bun run dev",
-        "generate:skin": "bun run src/scripts/generate_skin_manifest.ts"
+        "example": "bun run generate:skin && cd example && bun run dev",
+        "generate:skin": "bun run scripts/generate_skin.ts"
     },
     "dependencies": {
         "@rel-packages/osu-beatmap-parser": "^1.5.6",
