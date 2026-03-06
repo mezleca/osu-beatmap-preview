@@ -1,6 +1,7 @@
 import type { RenderHitObject } from "../render_types";
 import type { IRenderBackend } from "../backend/render_backend";
 import type { ISkinConfig } from "../../skin/skin_config";
+import type { StandardSkinElements } from "../../skin/skin_elements";
 import { Mods, has_mod } from "../../types/mods";
 import { clamp, vec2_lerp, type Vec2 } from "../../math/vector2";
 import { Easing } from "../drawable/transforms";
@@ -26,36 +27,65 @@ type FollowLine = {
     shrink_end_time: number;
 };
 
+type FollowSprite = {
+    start_pos: Vec2;
+    dir: Vec2;
+    distance: number;
+    start_time: number;
+    end_time: number;
+    preempt: number;
+    time_fade_in: number;
+    d: number;
+    f: number;
+    fade_in_time: number;
+    fade_out_time: number;
+};
+
 export class FollowPointRenderer {
     private skin: ISkinConfig;
     private mods: number;
     private preempt: number;
     private fade_in: number;
     private radius: number;
+    private skin_elements: StandardSkinElements | null = null;
     private points: FollowPoint[] = [];
     private lines: FollowLine[] = [];
+    private sprites: FollowSprite[] = [];
 
-    constructor(skin: ISkinConfig, mods: number, preempt: number, fade_in: number, radius: number) {
+    constructor(
+        skin: ISkinConfig,
+        mods: number,
+        preempt: number,
+        fade_in: number,
+        radius: number,
+        skin_elements: StandardSkinElements | null = null
+    ) {
         this.skin = skin;
         this.mods = mods;
         this.preempt = preempt;
         this.fade_in = fade_in;
         this.radius = radius;
+        this.skin_elements = skin_elements;
     }
 
-    update_settings(mods: number, preempt: number, fade_in: number, radius: number): void {
+    update_settings(mods: number, preempt: number, fade_in: number, radius: number, skin_elements?: StandardSkinElements | null): void {
         this.mods = mods;
         this.preempt = preempt;
         this.fade_in = fade_in;
         this.radius = radius;
+        if (skin_elements !== undefined) {
+            this.skin_elements = skin_elements;
+        }
     }
 
     build(objects: RenderHitObject[]): void {
-        this.points = [];
-        this.lines = [];
+        this.points.length = 0;
+        this.lines.length = 0;
+        this.sprites.length = 0;
 
         const SPACING = 32;
         const preempt = Math.max(450, this.preempt * 0.9);
+        const hidden = has_mod(this.mods, Mods.Hidden);
 
         for (let i = 0; i < objects.length - 1; i++) {
             const prev = objects[i];
@@ -83,7 +113,7 @@ export class FollowPointRenderer {
             let shrink_start_time = start_time + (grow_end_time - start_time) * 0.5;
             let shrink_end_time = next.time;
 
-            if (has_mod(this.mods, Mods.Hidden)) {
+            if (hidden) {
                 shrink_start_time = start_time + (grow_end_time - start_time) * 0.3;
                 shrink_end_time = start_time + (next.time - start_time) * 0.65;
             }
@@ -100,11 +130,33 @@ export class FollowPointRenderer {
                 shrink_end_time
             });
 
+            const number_of_sprites = distance < 80 ? 0 : Math.floor((distance - 48) / 32);
+            const time_fade_in = Math.max(1, this.fade_in);
+            for (let idx = 0; idx < number_of_sprites; idx++) {
+                const d = 32 * 1.5 + 32 * idx;
+                const f = d / distance;
+                const fade_out_time = start_time + f * duration;
+                const fade_in_time = fade_out_time - preempt;
+                this.sprites.push({
+                    start_pos,
+                    dir,
+                    distance,
+                    start_time,
+                    end_time: next.time,
+                    preempt,
+                    time_fade_in,
+                    d,
+                    f,
+                    fade_in_time,
+                    fade_out_time
+                });
+            }
+
             for (let d = SPACING * 1.5; d < distance - SPACING; d += SPACING) {
                 const fraction = d / distance;
                 let fade_out_time = prev.end_time + fraction * duration;
                 const fade_in_time = Math.max(prev.end_time, fade_out_time - preempt);
-                if (has_mod(this.mods, Mods.Hidden)) {
+                if (hidden) {
                     fade_out_time = Math.min(fade_out_time, start_time + duration * 0.65);
                 }
 
@@ -127,11 +179,66 @@ export class FollowPointRenderer {
         const mode = this.skin.follow_point_mode ?? "segments";
         const line_length = this.skin.follow_point_length || this.radius * 0.6;
         const gap_ratio = clamp(this.skin.follow_point_line_gap ?? 0, 0, 0.9);
+        const followpoint_frames = this.skin_elements?.followpoint_frames;
+        const followpoint_image = this.skin_elements?.followpoint;
+        const effective_mode = followpoint_image ? "sprites" : mode;
 
         const fade_duration = Math.max(this.fade_in * 0.15, 50);
-        const alpha_mul = 0.2;
+        const alpha_mul = followpoint_image ? 0.72 : 0.2;
 
-        if (mode === "full") {
+        if (effective_mode === "sprites") {
+            const frames = followpoint_frames && followpoint_frames.length > 0 ? followpoint_frames : followpoint_image ? [followpoint_image] : [];
+            const object_scale = this.radius / 64;
+
+            for (const sprite of this.sprites) {
+                if (time < sprite.start_time - sprite.preempt) {
+                    continue;
+                }
+                if (time > sprite.fade_out_time + sprite.time_fade_in) {
+                    continue;
+                }
+
+                let alpha = 0;
+                let local_scale = object_scale;
+                let factor = sprite.f;
+
+                if (time < sprite.fade_in_time + sprite.time_fade_in) {
+                    const opacity = Easing.OutQuad(clamp((time - sprite.fade_in_time) / sprite.time_fade_in, 0, 1));
+                    alpha = opacity;
+                    local_scale = (1.5 - 0.5 * opacity) * object_scale;
+                    factor = sprite.f - 0.1 * (1 - opacity);
+                } else if (time < sprite.fade_out_time) {
+                    alpha = 1;
+                    local_scale = 1 * object_scale;
+                    factor = sprite.f;
+                } else {
+                    const opacity = 1 - Easing.OutQuad(clamp((time - sprite.fade_out_time) / sprite.time_fade_in, 0, 1));
+                    alpha = opacity;
+                    local_scale = 1 * object_scale;
+                    factor = sprite.f;
+                }
+
+                if (alpha <= 0.01) {
+                    continue;
+                }
+
+                const frame_length = Math.max(1, (sprite.fade_out_time - sprite.fade_in_time) / Math.max(1, frames.length));
+                const frame_index = clamp(Math.floor((time - sprite.fade_in_time) / frame_length), 0, frames.length - 1);
+                const image = frames[frame_index];
+
+                const x = sprite.start_pos[0] + sprite.dir[0] * (factor * sprite.distance);
+                const y = sprite.start_pos[1] + sprite.dir[1] * (factor * sprite.distance);
+                const width = Math.max(1, image.width * local_scale);
+                const height = Math.max(1, image.height * local_scale);
+                const angle = Math.atan2(sprite.dir[1], sprite.dir[0]);
+                backend.set_alpha(alpha);
+                backend.save();
+                backend.translate(x, y);
+                backend.rotate(angle);
+                backend.draw_image(image, -width / 2, -height / 2, width, height);
+                backend.restore();
+            }
+        } else if (effective_mode === "full") {
             for (const line of this.lines) {
                 if (time < line.appear_time || time > line.shrink_end_time) continue;
 

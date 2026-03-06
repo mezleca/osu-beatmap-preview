@@ -1,5 +1,14 @@
 out
 dist
+example/dist
+node_modules
+extra
+src/assets
+.github
+.git
+coverage
+*.osz
+*.osk
 pnpm-lock.yaml
 LICENSE.md
 tsconfig.json

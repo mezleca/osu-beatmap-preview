@@ -5,9 +5,23 @@ export const process_timing_points = (points: ITimingPoint[]): ITimingPoint[] =>
         return points;
     }
 
-    return points.sort((a, b) => {
-        if (a.time !== b.time) return a.time - b.time;
-        if (a.uninherited === b.uninherited) return 0;
-        return a.uninherited > b.uninherited ? -1 : 1;
+    const indexed = points.map((point, index) => ({ point, index }));
+
+    indexed.sort((a, b) => {
+        if (a.point.time !== b.point.time) {
+            return a.point.time - b.point.time;
+        }
+
+        if (a.point.uninherited !== b.point.uninherited) {
+            return a.point.uninherited > b.point.uninherited ? -1 : 1;
+        }
+
+        return a.index - b.index;
     });
+
+    for (let i = 0; i < points.length; i++) {
+        points[i] = indexed[i].point;
+    }
+
+    return points;
 };

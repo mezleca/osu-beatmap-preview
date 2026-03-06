@@ -15,6 +15,7 @@ const ARROW_MOVE_IN_DURATION = 250;
 const ARROW_TOTAL_CYCLE = 300;
 const TICK_ANIM_DURATION = 150;
 const TICK_SCALE_DURATION = TICK_ANIM_DURATION * 4;
+const SLIDER_ENDPOINT_SCALE = 1.0;
 
 type TickEntry = {
     tick: SliderTickEvent;
@@ -34,6 +35,8 @@ export class DrawableSlider extends Drawable {
     private head_visual = new CircleVisual();
     private ball_alpha = 0;
     private ball_position: Vec2;
+    private ball_reverse = false;
+    private slider_ball_frame_delay = 1000 / 60;
     private follow_alpha = 0;
     private follow_scale = 1;
 
@@ -56,7 +59,7 @@ export class DrawableSlider extends Drawable {
     ) {
         super(hit_object, config);
         this.slider_data = hit_object.data as RenderSliderData;
-        const resample_step = Math.max(1, config.radius * 0.05);
+        const resample_step = Math.max(0.2, config.radius * 0.01);
         this.position_path = path;
         this.render_path = this.resample_path(path, resample_step);
         this.span_duration = span_duration;
@@ -65,6 +68,7 @@ export class DrawableSlider extends Drawable {
         const calculated_length = this.calculate_path_length();
         this.path_length = this.slider_data.distance > 0 ? this.slider_data.distance : calculated_length;
         this.ball_position = this.slider_data.pos;
+        this.slider_ball_frame_delay = this.compute_slider_ball_frame_delay();
 
         this.build_nested_objects();
 
@@ -84,7 +88,6 @@ export class DrawableSlider extends Drawable {
             return;
         }
 
-        // ticks/repeats are derived in slider space so render timing is stable across mods
         const result = generate_slider_events({
             start_time: hit_object.time,
             span_duration,
@@ -163,7 +166,6 @@ export class DrawableSlider extends Drawable {
         const FOLLOW_OUT_DURATION = 300;
         const FOLLOW_AREA = 2.4;
 
-        // before slider starts
         if (time < hit_object.time) {
             this.ball_alpha = 0;
             this.follow_alpha = 0;
@@ -171,18 +173,17 @@ export class DrawableSlider extends Drawable {
             return;
         }
 
-        // during slider
         if (time <= hit_object.end_time) {
             const elapsed = time - hit_object.time;
             const span_count = Math.max(1, this.slider_data.repetitions);
             const span_index = Math.min(Math.floor(elapsed / span_duration), span_count - 1);
             const span_progress = clamp((elapsed - span_index * span_duration) / span_duration, 0, 1);
             const t = span_index % 2 === 1 ? 1 - span_progress : span_progress;
+            this.ball_reverse = span_index % 2 === 1;
 
             this.ball_position = this.get_position_at_progress(t);
             this.ball_alpha = 1;
 
-            // follow circle animates in with OutQuint
             const follow_in_progress = clamp(elapsed / FOLLOW_IN_DURATION, 0, 1);
             const eased_in = Easing.OutQuint(follow_in_progress);
             this.follow_alpha = eased_in;
@@ -190,7 +191,6 @@ export class DrawableSlider extends Drawable {
             return;
         }
 
-        // after slider ends - animate out
         const time_since_end = time - hit_object.end_time;
         const fade_progress = clamp(time_since_end / FOLLOW_OUT_DURATION, 0, 1);
         const eased_out = Easing.OutQuint(fade_progress);
@@ -236,7 +236,6 @@ export class DrawableSlider extends Drawable {
                 this.body_alpha = 0;
             }
         } else {
-            // body: fade in over fade_in, then fade out 240ms after end
             if (time < appear_time) {
                 this.body_alpha = 0;
             } else if (time < hit_time) {
@@ -247,6 +246,20 @@ export class DrawableSlider extends Drawable {
                 this.body_alpha = 1 - clamp((time - hit_object.end_time) / FADE_OUT_DURATION, 0, 1);
             }
         }
+    }
+
+    private compute_slider_ball_frame_delay(): number {
+        if (this.skin.animation_framerate > 0) {
+            return 1000 / this.skin.animation_framerate;
+        }
+
+        const velocity = this.path_length / Math.max(1, this.span_duration);
+        const base_frame = 1000 / 60;
+        if (velocity <= 0) {
+            return base_frame;
+        }
+
+        return Math.max((0.15 / velocity) * base_frame, base_frame);
     }
 
     render(time: number): void {
@@ -286,9 +299,45 @@ export class DrawableSlider extends Drawable {
                 this.cached_texture.height / scale
             );
             backend.set_alpha(1);
+        } else {
+            this.render_live_body_fallback();
         }
 
         this.render_ticks(time);
+    }
+
+    private render_live_body_fallback(): void {
+        if (this.render_path.length < 2) {
+            return;
+        }
+
+        const { backend, config, skin } = this;
+        const border_color = skin.slider_border_color ?? "rgba(255,255,255,1)";
+        const body_color = skin.slider_track_override ?? get_combo_color(skin, this.combo_number, 1);
+        const border_width = config.radius * 2;
+        const body_width = config.radius * 1.8;
+
+        this.build_live_body_path();
+
+        backend.save();
+        backend.set_alpha(this.body_alpha * skin.slider_border_opacity);
+        backend.stroke_path(border_color, border_width, "round", "round");
+        backend.restore();
+
+        this.build_live_body_path();
+        backend.save();
+        backend.set_alpha(this.body_alpha * skin.slider_body_opacity);
+        backend.stroke_path(body_color, body_width, "round", "round");
+        backend.restore();
+    }
+
+    private build_live_body_path(): void {
+        const { backend } = this;
+        backend.begin_path();
+        backend.move_to(this.render_path[0][0], this.render_path[0][1]);
+        for (let i = 1; i < this.render_path.length; i++) {
+            backend.line_to(this.render_path[i][0], this.render_path[i][1]);
+        }
     }
 
     prepare_body_cache(): void {
@@ -298,11 +347,10 @@ export class DrawableSlider extends Drawable {
 
         const { backend, skin, config } = this;
         const { radius } = config;
-
-        const render_scale = (config.scale ?? 1) * (skin.slider_render_scale || 1);
+        const render_scale = Math.min(5.0, (config.scale ?? 1) * (skin.slider_render_scale || 1));
 
         if (!this.cached_texture || this.cached_scale !== render_scale) {
-            const body_color = get_combo_color(skin, this.combo_number, 1);
+            const body_color = skin.slider_track_override ?? get_combo_color(skin, this.combo_number, 1);
             const border_color = skin.slider_border_color ?? "rgba(255,255,255,1)";
             const scale = render_scale;
 
@@ -313,7 +361,8 @@ export class DrawableSlider extends Drawable {
                 body_color,
                 scale,
                 skin.slider_body_opacity,
-                skin.slider_border_opacity
+                skin.slider_border_opacity,
+                null
             );
             this.cached_scale = render_scale;
         }
@@ -323,8 +372,18 @@ export class DrawableSlider extends Drawable {
         return this.cached_texture != null;
     }
 
+    get_body_cache_bytes(): number {
+        if (!this.cached_texture) {
+            return 0;
+        }
+        return Math.max(0, Math.floor(this.cached_texture.width) * Math.floor(this.cached_texture.height) * 4);
+    }
+
     release_body_cache(): void {
-        if (this.cached_texture?.source instanceof HTMLCanvasElement) {
+        const source = this.cached_texture?.source as { destroy?: (destroy_base?: boolean) => void } | undefined;
+        if (source?.destroy) {
+            source.destroy(true);
+        } else if (this.cached_texture?.source instanceof HTMLCanvasElement) {
             this.cached_texture.source.width = 0;
             this.cached_texture.source.height = 0;
         }
@@ -332,7 +391,6 @@ export class DrawableSlider extends Drawable {
     }
 
     estimate_complexity(): number {
-        // heuristic score: longer sampled paths + many ticks/repeats are costly to rasterize
         return this.render_path.length + this.ticks.length * 8 + this.repeats.length * 16;
     }
 
@@ -349,24 +407,21 @@ export class DrawableSlider extends Drawable {
     private render_ticks(time: number): void {
         if (this.tick_entries_by_start.length === 0) return;
 
-        const { backend, config, hit_object } = this;
+        const { backend, config } = this;
         const { radius } = config;
 
         const base_tick_radius = radius * 0.12;
-        const appear_time = hit_object.time - config.preempt;
 
         const hidden = has_mod(config.mods, Mods.Hidden);
 
         for (const entry of this.tick_entries_by_start) {
             const tick = entry.tick;
 
-            // calculate when this tick became visible
             const elapsed_since_appear = time - entry.appear_time;
 
             if (elapsed_since_appear < 0) continue;
             if (entry.visible_end < time) continue;
 
-            // fade in over TICK_ANIM_DURATION
             let tick_alpha = clamp(elapsed_since_appear / TICK_ANIM_DURATION, 0, 1);
 
             if (hidden && entry.preempt > 0) {
@@ -385,7 +440,6 @@ export class DrawableSlider extends Drawable {
 
             tick_alpha *= this.body_alpha;
 
-            // scale from 0.5 to 1.0 over TICK_SCALE_DURATION with elastic out
             const scale_progress = clamp(elapsed_since_appear / TICK_SCALE_DURATION, 0, 1);
             const elastic_value = this.ease_out_elastic_half(scale_progress);
             const tick_scale = 0.5 + 0.5 * elastic_value;
@@ -393,7 +447,13 @@ export class DrawableSlider extends Drawable {
 
             if (tick_alpha > 0.01) {
                 backend.set_alpha(tick_alpha);
-                backend.draw_circle(tick.pos[0], tick.pos[1], tick_radius, "rgba(255,255,255,0.8)", "transparent", 0);
+                const scorepoint = this.config.skin_elements?.sliderscorepoint;
+                if (scorepoint) {
+                    const size = tick_radius * 2;
+                    backend.draw_image(scorepoint, tick.pos[0] - tick_radius, tick.pos[1] - tick_radius, size, size);
+                } else {
+                    backend.draw_circle(tick.pos[0], tick.pos[1], tick_radius, "rgba(255,255,255,0.8)", "transparent", 0);
+                }
             }
         }
 
@@ -402,7 +462,6 @@ export class DrawableSlider extends Drawable {
 
     private build_tick_entries(): void {
         const { hit_object, config } = this;
-        const appear_time = hit_object.time - config.preempt;
         const hidden = has_mod(config.mods, Mods.Hidden);
 
         this.tick_entries = this.ticks.map((tick) => {
@@ -435,73 +494,40 @@ export class DrawableSlider extends Drawable {
 
         const { backend, config, hit_object, span_duration } = this;
         const { radius } = config;
-        const arrow_size = radius * 0.6;
+        const arrow_size = radius * 0.9;
 
         for (const repeat of this.repeats) {
-            // the first repeat appears with the slider.
-            // subsequent repeats appear exactly 2 * SpanDuration before they are hit.
             let time_preempt = config.preempt;
             if (repeat.repeat_index > 0) {
                 time_preempt = span_duration * 2;
             } else {
-                // the first repeat appears when the slider appears
                 time_preempt += hit_object.time - (hit_object.time - config.preempt);
             }
 
             const appear_time = repeat.time - time_preempt;
             const is_at_end = repeat.repeat_index % 2 === 0;
 
-            // dont show if not in range
             if (time < appear_time || time > repeat.time + FADE_OUT_DURATION) continue;
 
-            // fade in logic: first repeat fades with slider, others pop in
             let alpha = this.body_alpha * 0.9;
             if (repeat.repeat_index === 0) {
                 const fade_in_progress = clamp((time - appear_time) / 150, 0, 1);
                 alpha *= Easing.OutQuint(fade_in_progress);
             } else {
-                // pop in (TimeFadeIn = 0)
                 if (time < appear_time) alpha = 0;
             }
 
             if (time > repeat.time) {
-                // fade out after hit
                 const anim_duration = Math.min(300, span_duration);
                 alpha *= 1 - clamp((time - repeat.time) / anim_duration, 0, 1);
             }
 
             if (alpha <= 0.01) continue;
 
-            // calculate arrow direction
-            const curve = this.position_path;
-            let aim_rotation_vector: Vec2;
-
-            if (is_at_end) {
-                // arrow at end pointing back
-                const search_start = curve.length - 1;
-                aim_rotation_vector = curve[0];
-
-                for (let i = search_start; i >= 0; i--) {
-                    if (Math.abs(curve[i][0] - repeat.pos[0]) > 0.01 || Math.abs(curve[i][1] - repeat.pos[1]) > 0.01) {
-                        aim_rotation_vector = curve[i];
-                        break;
-                    }
-                }
-            } else {
-                // arrow at start pointing forward
-                aim_rotation_vector = curve[curve.length - 1];
-
-                for (let i = 0; i < curve.length; i++) {
-                    if (Math.abs(curve[i][0] - repeat.pos[0]) > 0.01 || Math.abs(curve[i][1] - repeat.pos[1]) > 0.01) {
-                        aim_rotation_vector = curve[i];
-                        break;
-                    }
-                }
-            }
+            const aim_rotation_vector = this.get_arrow_target_vector(repeat.pos, is_at_end);
 
             const angle = Math.atan2(aim_rotation_vector[1] - repeat.pos[1], aim_rotation_vector[0] - repeat.pos[0]);
 
-            // calculate pulsing scale
             let scale = 1.0;
             if (time < repeat.time) {
                 const animation_start = hit_object.time - config.preempt;
@@ -513,7 +539,6 @@ export class DrawableSlider extends Drawable {
                     scale = ARROW_SCALE_AMOUNT - (ARROW_SCALE_AMOUNT - 1) * Easing.Out(clamp(in_progress, 0, 1));
                 }
             } else {
-                // after hit: scale up
                 const anim_duration = Math.min(300, span_duration);
                 const progress = clamp((time - repeat.time) / anim_duration, 0, 1);
                 scale = 1 + 0.5 * Easing.Out(progress);
@@ -526,26 +551,73 @@ export class DrawableSlider extends Drawable {
             backend.translate(repeat.pos[0], repeat.pos[1]);
             backend.rotate(angle);
 
-            backend.begin_path();
-            backend.move_to(scaled_arrow_size * 0.8, 0);
-            backend.line_to(-scaled_arrow_size * 0.4, -scaled_arrow_size * 0.5);
-            backend.line_to(-scaled_arrow_size * 0.4, scaled_arrow_size * 0.5);
-            backend.close_path();
-            backend.fill_path("rgba(255,255,255,0.9)");
+            const reverse_arrow_frames = this.config.skin_elements?.reversearrow_frames;
+            const reverse_arrow =
+                reverse_arrow_frames && reverse_arrow_frames.length > 0
+                    ? reverse_arrow_frames[Math.floor((time - appear_time) / 50) % reverse_arrow_frames.length]
+                    : this.config.skin_elements?.reversearrow;
+            if (reverse_arrow) {
+                backend.draw_image(reverse_arrow, -scaled_arrow_size, -scaled_arrow_size, scaled_arrow_size * 2, scaled_arrow_size * 2);
+            } else {
+                backend.begin_path();
+                backend.move_to(scaled_arrow_size * 0.8, 0);
+                backend.line_to(-scaled_arrow_size * 0.4, -scaled_arrow_size * 0.5);
+                backend.line_to(-scaled_arrow_size * 0.4, scaled_arrow_size * 0.5);
+                backend.close_path();
+                backend.fill_path("rgba(255,255,255,0.9)");
+            }
 
             backend.restore();
         }
     }
 
     private render_head(): void {
-        if (this.head_visual.circle_alpha <= 0.01) return;
+        if (this.head_visual.circle_alpha <= 0.01 && this.body_alpha <= 0.01) return;
 
         const { backend, skin, config } = this;
         const { radius } = config;
-        const pos = this.slider_data.pos;
+        const start_pos = this.slider_data.pos;
+        const end_pos = this.hit_object.end_pos;
         const combo_color = get_combo_color(skin, this.combo_number, 1);
 
-        this.head_visual.render(backend, skin, pos, radius, combo_color, this.combo_count);
+        this.head_visual.render(
+            backend,
+            skin,
+            start_pos,
+            radius * SLIDER_ENDPOINT_SCALE,
+            combo_color,
+            this.combo_count,
+            config.skin_elements,
+            config.skin_elements?.sliderstartcircle
+                ? {
+                      circle: config.skin_elements.sliderstartcircle,
+                      overlay: config.skin_elements.sliderstartcircleoverlay
+                  }
+                : {
+                      circle: config.skin_elements?.hitcircle,
+                      overlay: config.skin_elements?.hitcircleoverlay
+                  },
+            true
+        );
+
+        if (this.body_alpha > 0.01) {
+            const tail_circle = config.skin_elements?.sliderendcircle;
+            if (!tail_circle) {
+                return;
+            }
+
+            backend.set_alpha(this.body_alpha * skin.hit_circle_opacity);
+            const tail_overlay = config.skin_elements?.sliderendcircleoverlay;
+            const tail_radius = radius * SLIDER_ENDPOINT_SCALE;
+            const tail_size = tail_radius * 2;
+
+            backend.draw_image(tail_circle, end_pos[0] - tail_radius, end_pos[1] - tail_radius, tail_size, tail_size, combo_color);
+
+            if (tail_overlay) {
+                backend.draw_image(tail_overlay, end_pos[0] - tail_radius, end_pos[1] - tail_radius, tail_size, tail_size);
+            }
+            backend.set_alpha(1);
+        }
     }
 
     private render_ball(time: number): void {
@@ -556,22 +628,97 @@ export class DrawableSlider extends Drawable {
         const pos = this.ball_position;
         const combo_color = get_combo_color(skin, this.combo_number, 0.9);
 
-        // follow circle with smooth scale animation
         if (this.follow_alpha > 0.01) {
             const follow_size = radius * this.follow_scale;
 
             backend.set_alpha(this.follow_alpha * skin.follow_circle_opacity);
-            backend.begin_path();
-            backend.arc_to(pos[0], pos[1], follow_size, 0, Math.PI * 2);
-            backend.stroke_path(skin.follow_circle_color, skin.follow_circle_width);
+            const follow_image = this.config.skin_elements?.sliderfollowcircle;
+            if (follow_image) {
+                backend.draw_image(follow_image, pos[0] - follow_size, pos[1] - follow_size, follow_size * 2, follow_size * 2);
+            } else {
+                backend.begin_path();
+                backend.arc_to(pos[0], pos[1], follow_size, 0, Math.PI * 2);
+                backend.stroke_path(skin.follow_circle_color, skin.follow_circle_width);
+            }
         }
 
-        // slider ball
         if (skin.enable_slider_ball && this.ball_alpha > 0.01) {
             backend.set_alpha(this.ball_alpha * skin.slider_ball_opacity);
-            backend.draw_circle(pos[0], pos[1], radius * 0.85, combo_color, "rgba(255,255,255,0.9)", radius * 0.1);
+            const slider_ball_frames = this.config.skin_elements?.sliderball_frames;
+            let slider_ball = this.config.skin_elements?.sliderball;
+            if (slider_ball_frames && slider_ball_frames.length > 0) {
+                const elapsed = Math.max(0, time - this.hit_object.time);
+                const index = Math.floor(elapsed / Math.max(1, this.slider_ball_frame_delay)) % slider_ball_frames.length;
+                slider_ball = slider_ball_frames[index];
+            }
+            if (slider_ball) {
+                const size = radius * 1.85;
+                const tint_color = skin.allow_slider_ball_tint ? combo_color : skin.slider_ball_color;
+                this.draw_slider_ball_layers(pos, size, slider_ball, tint_color, skin.slider_ball_flip && this.ball_reverse);
+            } else {
+                const fallback_ball_color = skin.allow_slider_ball_tint ? combo_color : skin.slider_ball_color;
+                backend.draw_circle(pos[0], pos[1], radius * 0.85, fallback_ball_color, "rgba(255,255,255,0.9)", radius * 0.1);
+            }
         }
 
         backend.set_alpha(1);
+    }
+
+    private get_arrow_target_vector(repeat_pos: Vec2, is_at_end: boolean): Vec2 {
+        const curve = this.position_path;
+        if (curve.length === 0) {
+            return repeat_pos;
+        }
+
+        if (is_at_end) {
+            for (let i = curve.length - 1; i >= 0; i--) {
+                if (Math.abs(curve[i][0] - repeat_pos[0]) > 0.01 || Math.abs(curve[i][1] - repeat_pos[1]) > 0.01) {
+                    return curve[i];
+                }
+            }
+            return curve[0];
+        }
+
+        for (let i = 0; i < curve.length; i++) {
+            if (Math.abs(curve[i][0] - repeat_pos[0]) > 0.01 || Math.abs(curve[i][1] - repeat_pos[1]) > 0.01) {
+                return curve[i];
+            }
+        }
+
+        return curve[curve.length - 1];
+    }
+
+    private draw_slider_ball_layers(pos: Vec2, size: number, slider_ball: RenderImage, tint_color: string, flip: boolean): void {
+        const { backend } = this;
+        const nd_layer = this.config.skin_elements?.sliderball_nd;
+        const spec_layer = this.config.skin_elements?.sliderball_spec;
+        const half = size / 2;
+
+        if (flip) {
+            backend.save();
+            backend.translate(pos[0], pos[1]);
+            backend.scale(-1, 1);
+            if (nd_layer) {
+                backend.draw_image(nd_layer, -half, -half, size, size);
+            }
+            backend.draw_image(slider_ball, -half, -half, size, size, tint_color);
+            if (spec_layer) {
+                backend.set_blend_mode("lighter");
+                backend.draw_image(spec_layer, -half, -half, size, size);
+                backend.set_blend_mode("normal");
+            }
+            backend.restore();
+            return;
+        }
+
+        if (nd_layer) {
+            backend.draw_image(nd_layer, pos[0] - half, pos[1] - half, size, size);
+        }
+        backend.draw_image(slider_ball, pos[0] - half, pos[1] - half, size, size, tint_color);
+        if (spec_layer) {
+            backend.set_blend_mode("lighter");
+            backend.draw_image(spec_layer, pos[0] - half, pos[1] - half, size, size);
+            backend.set_blend_mode("normal");
+        }
     }
 }

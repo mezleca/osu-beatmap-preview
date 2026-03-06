@@ -90,12 +90,10 @@ export const get_speed_multiplier = (mods: number): number => {
 const EXCLUSIVE_MOD_GROUPS = [Mods.HardRock | Mods.Easy, Mods.DoubleTime | Mods.HalfTime | Mods.Nightcore, Mods.Hidden | Mods.FadeIn];
 
 export const toggle_mod = (current: number, mod: number): number => {
-    // turn off
     if (current & mod) {
         return current & ~mod;
     }
 
-    // turn on
     let result = current;
 
     for (const group of EXCLUSIVE_MOD_GROUPS) {

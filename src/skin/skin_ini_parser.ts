@@ -8,6 +8,12 @@ export interface SkinIniData {
         hit_circle_overlay_above_number?: boolean;
         slider_ball_flip?: boolean;
         allow_slider_ball_tint?: boolean;
+        slider_ball_frames?: number;
+        animation_framerate?: number;
+    };
+    fonts: {
+        hit_circle_prefix?: string;
+        hit_circle_overlap?: number;
     };
     colours: {
         combo_colors: string[];
@@ -19,10 +25,21 @@ export interface SkinIniData {
 }
 
 const DEFAULT_COMBO_COLORS = ["rgb(255, 192, 0)", "rgb(0, 202, 0)", "rgb(18, 124, 255)", "rgb(242, 24, 57)"];
+const parse_skin_bool = (value: string): boolean | undefined => {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "1" || normalized === "true" || normalized === "yes") {
+        return true;
+    }
+    if (normalized === "0" || normalized === "false" || normalized === "no") {
+        return false;
+    }
+    return undefined;
+};
 
 export const parse_skin_ini = (content: string): SkinIniData => {
     const result: SkinIniData = {
         general: {},
+        fonts: {},
         colours: {
             combo_colors: []
         }
@@ -55,6 +72,9 @@ export const parse_skin_ini = (content: string): SkinIniData => {
             case "colours":
                 parse_colours(result.colours, key, value);
                 break;
+            case "fonts":
+                parse_fonts(result.fonts, key, value);
+                break;
         }
     }
 
@@ -64,6 +84,23 @@ export const parse_skin_ini = (content: string): SkinIniData => {
     }
 
     return result;
+};
+
+const parse_fonts = (fonts: SkinIniData["fonts"], key: string, value: string): void => {
+    switch (key) {
+        case "hitcircleprefix":
+            if (value.length > 0) {
+                fonts.hit_circle_prefix = value.trim();
+            }
+            break;
+        case "hitcircleoverlap": {
+            const overlap = Number.parseInt(value, 10);
+            if (Number.isFinite(overlap)) {
+                fonts.hit_circle_overlap = overlap;
+            }
+            break;
+        }
+    }
 };
 
 const parse_general = (general: SkinIniData["general"], key: string, value: string): void => {
@@ -79,15 +116,29 @@ const parse_general = (general: SkinIniData["general"], key: string, value: stri
             break;
         case "hitcircleoverlayabovenumber":
         case "hitcircleoverlayabovenumer":
-            general.hit_circle_overlay_above_number = value === "1";
+            general.hit_circle_overlay_above_number = parse_skin_bool(value);
             break;
         case "sliderballflip":
-            general.slider_ball_flip = value === "1";
+            general.slider_ball_flip = parse_skin_bool(value);
             break;
         case "allowslidertainttint":
         case "allowsliderballtint":
-            general.allow_slider_ball_tint = value === "1";
+            general.allow_slider_ball_tint = parse_skin_bool(value);
             break;
+        case "sliderballframes": {
+            const frames = Number.parseInt(value, 10);
+            if (Number.isFinite(frames) && frames > 0) {
+                general.slider_ball_frames = frames;
+            }
+            break;
+        }
+        case "animationframerate": {
+            const framerate = Number.parseInt(value, 10);
+            if (Number.isFinite(framerate)) {
+                general.animation_framerate = framerate;
+            }
+            break;
+        }
     }
 };
 
@@ -96,7 +147,7 @@ const parse_colours = (colours: SkinIniData["colours"], key: string, value: stri
     if (!rgb) return;
 
     // combo colors (Combo1-8)
-    const combo_match = key.match(/^combo(\d)$/);
+    const combo_match = key.match(/^combo(\d+)$/);
 
     if (combo_match) {
         const idx = parseInt(combo_match[1]) - 1;
@@ -149,6 +200,34 @@ export const apply_skin_ini = (config: ISkinConfig, ini: SkinIniData): ISkinConf
     }
     if (ini.colours.slider_track_override) {
         result.slider_track_override = ini.colours.slider_track_override;
+    }
+    if (ini.colours.slider_ball) {
+        result.slider_ball_color = ini.colours.slider_ball;
+    }
+    if (ini.colours.spinner_background) {
+        result.spinner_background_color = ini.colours.spinner_background;
+    }
+
+    if (ini.general.hit_circle_overlay_above_number !== undefined) {
+        result.hit_circle_overlay_above_number = ini.general.hit_circle_overlay_above_number;
+    }
+    if (ini.general.slider_ball_flip !== undefined) {
+        result.slider_ball_flip = ini.general.slider_ball_flip;
+    }
+    if (ini.general.allow_slider_ball_tint !== undefined) {
+        result.allow_slider_ball_tint = ini.general.allow_slider_ball_tint;
+    }
+    if (ini.general.slider_ball_frames !== undefined) {
+        result.slider_ball_frames = ini.general.slider_ball_frames;
+    }
+    if (ini.general.animation_framerate !== undefined) {
+        result.animation_framerate = ini.general.animation_framerate;
+    }
+    if (ini.fonts.hit_circle_prefix !== undefined) {
+        result.hit_circle_prefix = ini.fonts.hit_circle_prefix;
+    }
+    if (ini.fonts.hit_circle_overlap !== undefined) {
+        result.hit_circle_overlap = ini.fonts.hit_circle_overlap;
     }
 
     return result;

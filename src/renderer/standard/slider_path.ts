@@ -50,8 +50,26 @@ const flatten_multibezier = (points: Vec2[]): Vec2[] => {
 
     const all_points: Vec2[] = [];
 
-    for (const segment of segments) {
-        all_points.push(...flatten_bezier(segment));
+    for (let i = 0; i < segments.length; i++) {
+        const flattened = flatten_bezier(segments[i]);
+        if (flattened.length === 0) {
+            continue;
+        }
+
+        if (all_points.length > 0) {
+            const prev = all_points[all_points.length - 1];
+            const first = flattened[0];
+            if (prev[0] === first[0] && prev[1] === first[1]) {
+                for (let j = 1; j < flattened.length; j++) {
+                    all_points.push(flattened[j]);
+                }
+                continue;
+            }
+        }
+
+        for (let j = 0; j < flattened.length; j++) {
+            all_points.push(flattened[j]);
+        }
     }
 
     return all_points;

@@ -3,12 +3,8 @@ export enum ErrorCode {
     DifficultyNotFound = "DIFFICULTY_NOT_FOUND",
     InvalidBeatmap = "INVALID_BEATMAP",
     UnsupportedMode = "UNSUPPORTED_MODE",
-
-    // audio errors
     AudioNotLoaded = "AUDIO_NOT_LOADED",
     AudioDecodeError = "AUDIO_DECODE_ERROR",
-
-    // general
     NotLoaded = "NOT_LOADED",
     Unknown = "UNKNOWN"
 }

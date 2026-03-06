@@ -2,12 +2,11 @@ import type { IRenderBackend, RenderImage } from "./backend/render_backend";
 import type { IBeatmap } from "../types/beatmap";
 import type { RenderHitObject } from "./render_types";
 import type { ISkinConfig } from "../skin/skin_config";
+import type { StandardSkinElements } from "../skin/skin_elements";
 
-// osu! playfield is 512x384 in osu! pixels
 export const PLAYFIELD_WIDTH = 512;
 export const PLAYFIELD_HEIGHT = 384;
 
-// grid levels (osu! editor)
 export enum GridLevel {
     None = 0,
     Large = 32,
@@ -17,25 +16,17 @@ export enum GridLevel {
 }
 
 export interface IRendererConfig {
-    // playfield offset from canvas origin
     offset_x: number;
     offset_y: number;
-
-    // scale factor for playfield
     scale: number;
-
-    // show playfield border
     show_playfield: boolean;
     playfield_color: string;
     playfield_opacity: number;
-
-    // grid overlay
     grid_level: GridLevel;
     grid_color: string;
     grid_opacity: number;
-
-    // high DPI rendering (device pixel ratio)
     use_high_dpi: boolean;
+    enable_stacking: boolean;
 }
 
 export const DEFAULT_RENDERER_CONFIG: IRendererConfig = {
@@ -51,7 +42,9 @@ export const DEFAULT_RENDERER_CONFIG: IRendererConfig = {
     grid_color: "#ffffff",
     grid_opacity: 0.35,
 
-    use_high_dpi: true
+    use_high_dpi: true,
+
+    enable_stacking: true
 };
 
 export abstract class BaseRenderer {
@@ -59,16 +52,24 @@ export abstract class BaseRenderer {
     protected skin: ISkinConfig;
     protected config: IRendererConfig;
     protected mods: number;
+    protected skin_elements: StandardSkinElements | null;
 
     protected beatmap!: IBeatmap;
     protected objects: RenderHitObject[] = [];
     protected background_image: RenderImage | null = null;
 
-    constructor(backend: IRenderBackend, skin: ISkinConfig, mods: number = 0, config: IRendererConfig = DEFAULT_RENDERER_CONFIG) {
+    constructor(
+        backend: IRenderBackend,
+        skin: ISkinConfig,
+        mods: number = 0,
+        config: IRendererConfig = DEFAULT_RENDERER_CONFIG,
+        skin_elements: StandardSkinElements | null = null
+    ) {
         this.backend = backend;
         this.skin = skin;
         this.mods = mods;
         this.config = { ...DEFAULT_RENDERER_CONFIG, ...config };
+        this.skin_elements = skin_elements;
     }
 
     set_background(image: RenderImage | null): void {
@@ -82,17 +83,15 @@ export abstract class BaseRenderer {
     abstract initialize(beatmap: IBeatmap): void;
     abstract render(time: number): void;
 
-    // update mods and recalculate difficulty attributes
     abstract set_mods(mods: number): void;
 
-    precompute(start_time: number = 0): void {}
-    on_seek(time: number): void {}
+    precompute(_start_time: number = 0): void {}
+    on_seek(_time: number): void {}
 
     dispose(): void {
         this.objects = [];
     }
 
-    // render playfield border
     protected render_playfield(custom_w?: number, custom_h?: number, custom_x?: number, custom_y?: number): void {
         if (!this.config.show_playfield) return;
 
@@ -105,7 +104,6 @@ export abstract class BaseRenderer {
         backend.save();
         backend.set_alpha(config.playfield_opacity);
 
-        // draw border box
         backend.begin_path();
         backend.move_to(x, y);
         backend.line_to(x + w, y);
@@ -117,7 +115,6 @@ export abstract class BaseRenderer {
         backend.restore();
     }
 
-    // render grid overlay
     protected render_grid(): void {
         if (this.config.grid_level === GridLevel.None) return;
 
@@ -127,7 +124,6 @@ export abstract class BaseRenderer {
         backend.save();
         backend.set_alpha(config.grid_opacity);
 
-        // vertical lines
         for (let x = 0; x <= PLAYFIELD_WIDTH; x += spacing) {
             backend.begin_path();
             backend.move_to(x, 0);
@@ -135,7 +131,6 @@ export abstract class BaseRenderer {
             backend.stroke_path(config.grid_color, x % (spacing * 4) === 0 ? 1 : 0.5);
         }
 
-        // horizontal lines
         for (let y = 0; y <= PLAYFIELD_HEIGHT; y += spacing) {
             backend.begin_path();
             backend.move_to(0, y);
@@ -151,14 +146,13 @@ export abstract class BaseRenderer {
 
         const { backend } = this;
         backend.save();
-        backend.set_alpha(0.3); // dim background
+        backend.set_alpha(0.3);
 
         const canvas_w = backend.width;
         const canvas_h = backend.height;
         const { width: img_w, height: img_h } = this.background_image;
 
         if (img_w > 0 && img_h > 0) {
-            // maintain aspect ratio but fill the entire area
             const scale = Math.max(canvas_w / img_w, canvas_h / img_h);
             const draw_w = img_w * scale;
             const draw_h = img_h * scale;
@@ -176,7 +170,8 @@ export abstract class BaseRenderer {
     protected get_visible_objects(time: number, preempt: number, fade_out: number): RenderHitObject[] {
         const visible: RenderHitObject[] = [];
 
-        for (const obj of this.objects) {
+        for (let i = 0; i < this.objects.length; i++) {
+            const obj = this.objects[i];
             const appear_time = obj.time - preempt;
             const disappear_time = obj.end_time + fade_out;
 

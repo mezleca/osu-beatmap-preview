@@ -93,7 +93,7 @@ export interface IRenderBackend {
     set_shadow(color: string, blur: number): void;
     set_composite_operation(op: CompositeOperation): void;
     set_blend_mode(mode: "normal" | "lighter" | "multiply" | "screen"): void;
-    draw_image(image: RenderImage, x: number, y: number, width?: number, height?: number): void;
+    draw_image(image: RenderImage, x: number, y: number, width?: number, height?: number, tint_color?: string): void;
     draw_image_part(image: RenderImage, sx: number, sy: number, sw: number, sh: number, dx: number, dy: number, dw: number, dh: number): void;
     render_slider_to_image(
         path: [number, number][],
@@ -102,6 +102,7 @@ export interface IRenderBackend {
         body_color: string,
         scale: number,
         body_opacity?: number,
-        border_opacity?: number
+        border_opacity?: number,
+        body_texture?: RenderImage | null
     ): RenderImage | null;
 }

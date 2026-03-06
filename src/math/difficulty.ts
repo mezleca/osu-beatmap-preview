@@ -27,8 +27,9 @@ export const calculate_preempt = (ar: number): number => difficulty_range(ar, PR
 export const calculate_fade_in = (preempt: number): number => 400 * Math.min(1, preempt / PREEMPT_MIN);
 
 export const calculate_scale = (cs: number): number => {
+    const broken_gamefield_rounding_allowance = 1.00041;
     const normalized = (cs - 5) / 5; // maps [0, 10] to [-1, 1]
-    return (1 - 0.7 * normalized) / 2;
+    return ((1 - 0.7 * normalized) / 2) * broken_gamefield_rounding_allowance;
 };
 
 export const calculate_radius = (cs: number): number => calculate_scale(cs) * 64;

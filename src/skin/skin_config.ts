@@ -1,9 +1,13 @@
 export interface ISkinConfig {
+    legacy_version: number;
     combo_colors: string[];
 
     // circle rendering
     circle_border_width: number;
     hit_circle_opacity: number;
+    hit_circle_overlay_above_number: boolean;
+    hit_circle_prefix: string;
+    hit_circle_overlap: number;
 
     // approach circle
     enable_approach_circle: boolean;
@@ -41,6 +45,10 @@ export interface ISkinConfig {
     slider_ball_color: string;
     slider_ball_opacity: number;
     enable_slider_ball: boolean;
+    slider_ball_flip: boolean;
+    allow_slider_ball_tint: boolean;
+    slider_ball_frames: number;
+    animation_framerate: number;
 
     // follow points (dots between objects)
     follow_point_width: number;
@@ -52,6 +60,7 @@ export interface ISkinConfig {
     // spinner
     spinner_size: number;
     spinner_center_size: number;
+    spinner_background_color: string;
 
     // mania
     mania_lane_width: number;
@@ -84,10 +93,14 @@ const MANIA_KEY_COLORS: Record<number, string[]> = {
 };
 
 export const DEFAULT_SKIN: ISkinConfig = {
+    legacy_version: 2.7,
     combo_colors: ["0,185,0", "7, 105, 227", "224, 4, 38", "227, 171, 2"],
 
     circle_border_width: 0.12,
-    hit_circle_opacity: 0.95,
+    hit_circle_opacity: 1.0,
+    hit_circle_overlay_above_number: true,
+    hit_circle_prefix: "default",
+    hit_circle_overlap: -2,
 
     enable_approach_circle: true,
     approach_circle_width: 0.1,
@@ -116,6 +129,10 @@ export const DEFAULT_SKIN: ISkinConfig = {
     slider_ball_color: "#ffffff",
     slider_ball_opacity: 1.0,
     enable_slider_ball: true,
+    slider_ball_flip: false,
+    allow_slider_ball_tint: true,
+    slider_ball_frames: 10,
+    animation_framerate: -1,
 
     follow_point_width: 2,
     follow_point_shape: "line",
@@ -125,6 +142,7 @@ export const DEFAULT_SKIN: ISkinConfig = {
 
     spinner_size: 180,
     spinner_center_size: 10,
+    spinner_background_color: "rgba(100,100,100,1)",
 
     mania_lane_width: 30,
     mania_note_height: 15,
@@ -152,10 +170,55 @@ export const merge_skin = (partial?: Partial<ISkinConfig>): ISkinConfig => {
 
 export const get_combo_color = (skin: ISkinConfig, combo_number: number, alpha: number = 1): string => {
     const color = skin.combo_colors[combo_number % skin.combo_colors.length];
-    return `rgba(${color},${alpha})`;
+    return to_rgba_with_alpha(color, alpha);
 };
 
 export const get_mania_lane_color = (skin: ISkinConfig, key_count: number, lane: number): string => {
     const colors = skin.mania_lane_colors[key_count] ?? skin.mania_lane_colors[4];
     return colors[lane % colors.length] ?? "#ffffff";
+};
+
+const to_rgba_with_alpha = (color: string, alpha: number): string => {
+    const normalized = color.trim();
+
+    // "r,g,b"
+    if (normalized.includes(",") && !normalized.startsWith("rgb")) {
+        return `rgba(${normalized},${alpha})`;
+    }
+
+    // "rgb(r,g,b)"
+    const rgb = normalized.match(/^rgb\(([^)]+)\)$/i);
+    if (rgb) {
+        return `rgba(${rgb[1]},${alpha})`;
+    }
+
+    // "rgba(r,g,b,a)"
+    const rgba = normalized.match(/^rgba\(([^)]+)\)$/i);
+    if (rgba) {
+        const parts = rgba[1].split(",").map((value) => value.trim());
+        if (parts.length >= 3) {
+            return `rgba(${parts[0]},${parts[1]},${parts[2]},${alpha})`;
+        }
+    }
+
+    // "#rgb", "#rrggbb", "#rrggbbaa"
+    if (normalized.startsWith("#")) {
+        const hex = normalized.slice(1);
+        if (hex.length === 3) {
+            const r = Number.parseInt(hex[0] + hex[0], 16);
+            const g = Number.parseInt(hex[1] + hex[1], 16);
+            const b = Number.parseInt(hex[2] + hex[2], 16);
+            return `rgba(${r},${g},${b},${alpha})`;
+        }
+        if (hex.length === 6 || hex.length === 8) {
+            const r = Number.parseInt(hex.slice(0, 2), 16);
+            const g = Number.parseInt(hex.slice(2, 4), 16);
+            const b = Number.parseInt(hex.slice(4, 6), 16);
+            return `rgba(${r},${g},${b},${alpha})`;
+        }
+    }
+
+    // fallback: if an unsupported CSS keyword is provided, preserve color
+    // and rely on caller alpha state.
+    return normalized;
 };

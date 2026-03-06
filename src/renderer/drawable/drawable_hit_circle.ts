@@ -18,13 +18,13 @@ export class DrawableHitCircle extends Drawable {
         this.hitburst.update(time, this.hit_object.time, this.config);
     }
 
-    render(time: number): void {
+    render(_time: number): void {
         const { backend, skin, config } = this;
         const { radius } = config;
         const pos = this.position;
         const combo_color = get_combo_color(skin, this.combo_number, 1);
 
-        this.visual.render(backend, skin, pos, radius, combo_color, this.combo_count);
+        this.visual.render(backend, skin, pos, radius, combo_color, this.combo_count, config.skin_elements, undefined, true, false);
         this.hitburst.render(backend, skin, pos, radius, combo_color);
     }
 }

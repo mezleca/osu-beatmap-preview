@@ -1,16 +1,17 @@
-import JSZip from "jszip";
 import type { IBeatmap } from "../types/beatmap";
 import type { IBeatmapResources } from "../types/resources";
 import { init_wasm, parse as wasm_parse } from "@rel-packages/osu-beatmap-parser/browser";
 
+import JSZip from "jszip";
+
 export interface IOszLoaderOptions {
-    // select difficulty by index or version name
     difficulty?: number | string;
 }
 
 export class OszLoader {
     async load_osz(data: ArrayBuffer, options?: IOszLoaderOptions): Promise<IBeatmapResources> {
         await init_wasm();
+
         const zip = await JSZip.loadAsync(data);
         const files = new Map<string, ArrayBuffer>();
 
@@ -25,14 +26,13 @@ export class OszLoader {
 
     async load_from_files(files: Map<string, ArrayBuffer | string>, options?: IOszLoaderOptions): Promise<IBeatmapResources> {
         await init_wasm();
-        // find all .osu files
+
         const osu_files = [...files.keys()].filter((f) => f.toLowerCase().endsWith(".osu"));
 
         if (osu_files.length === 0) {
             throw new Error("No .osu files found in beatmap");
         }
 
-        // parse difficulties
         const available_difficulties = await Promise.all(
             osu_files.map(async (file) => {
                 const content = files.get(file)!;
@@ -42,12 +42,10 @@ export class OszLoader {
             })
         );
 
-        // select difficulty
         const selected_file = this.select_difficulty(osu_files, available_difficulties, options?.difficulty);
         const osu_content = files.get(selected_file)!;
         const osu_bytes = this.to_bytes(osu_content);
 
-        // parse full beatmap (async via worker)
         const beatmap = (await wasm_parse(osu_bytes)) as IBeatmap;
 
         const audio_filename = beatmap.General.AudioFilename || null;
@@ -55,7 +53,6 @@ export class OszLoader {
         const video_filename = beatmap.Events.video?.filename || null;
         const video_offset = beatmap.Events.video?.startTime ?? 0;
 
-        // convert files map to ArrayBuffer only
         const array_buffer_files = new Map<string, ArrayBuffer>();
         for (const [name, content] of files) {
             if (content instanceof ArrayBuffer) {
@@ -65,14 +62,12 @@ export class OszLoader {
             }
         }
 
-        // extract audio
         let audio: ArrayBuffer | undefined;
 
         if (audio_filename) {
             audio = this.find_file(array_buffer_files, audio_filename);
         }
 
-        // extract background
         let background: Blob | undefined;
 
         if (background_filename) {
@@ -82,7 +77,6 @@ export class OszLoader {
             }
         }
 
-        // extract video
         let video: Blob | undefined;
 
         if (video_filename) {
@@ -128,12 +122,10 @@ export class OszLoader {
     }
 
     private select_difficulty(osu_files: string[], difficulties: { filename: string; beatmap: IBeatmap }[], selector?: number | string): string {
-        // no selector: use first file
         if (selector === undefined) {
             return osu_files[0];
         }
 
-        // number: select by index
         if (typeof selector === "number") {
             if (selector < 0 || selector >= osu_files.length) {
                 throw new Error(`Difficulty index ${selector} out of range (0-${osu_files.length - 1})`);
@@ -141,13 +133,11 @@ export class OszLoader {
             return osu_files[selector];
         }
 
-        // string: search by version name
         const exact_match = difficulties.find((diff) => diff.beatmap.Metadata.Version === selector);
         if (exact_match) {
             return exact_match.filename;
         }
 
-        // fallback: partial match against filename or version
         const lower_selector = selector.toLowerCase();
         const partial_match = difficulties.find(
             (diff) => diff.filename.toLowerCase().includes(lower_selector) || diff.beatmap.Metadata.Version.toLowerCase().includes(lower_selector)
@@ -160,12 +150,10 @@ export class OszLoader {
     }
 
     private find_file(files: Map<string, ArrayBuffer>, filename: string): ArrayBuffer | undefined {
-        // exact match
         if (files.has(filename)) {
             return files.get(filename);
         }
 
-        // case-insensitive search
         const lower = filename.toLowerCase();
         for (const [name, data] of files) {
             if (name.toLowerCase() === lower) {

@@ -1,7 +1,8 @@
 import type { IRenderBackend } from "../backend/render_backend";
 import type { RenderHitObject } from "../render_types";
 import type { ISkinConfig } from "../../skin/skin_config";
-import { TransformSequence, Easing } from "./transforms";
+import type { StandardSkinElements } from "../../skin/skin_elements";
+import { TransformSequence } from "./transforms";
 
 export enum ArmedState {
     Idle,
@@ -12,6 +13,7 @@ export enum ArmedState {
 export interface DrawableConfig {
     backend: IRenderBackend;
     skin: ISkinConfig;
+    skin_elements?: StandardSkinElements | null;
     preempt: number;
     fade_in: number;
     radius: number;
@@ -74,20 +76,16 @@ export abstract class Drawable {
     protected update_state(time: number): void {
         if (this.armed_state === ArmedState.Idle && time >= this.hit_object.time) {
             this.armed_state = ArmedState.Hit;
-            // first crossing of hit time, useful for one-shot effects
             this.on_hit(time);
         }
     }
 
-    protected on_hit(time: number): void {
-        // override in subclasses
-    }
+    protected on_hit(_time: number): void {}
 
     abstract render(time: number): void;
 
-    // multi-pass rendering support
-    render_body_pass(time: number): void {}
-    render_head_pass(time: number): void {}
+    render_body_pass(_time: number): void {}
+    render_head_pass(_time: number): void {}
     dispose(): void {}
 
     get start_time(): number {

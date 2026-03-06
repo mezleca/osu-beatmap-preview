@@ -14,14 +14,12 @@ export const calculate_tick_spacing = (beatmap: IBeatmap, timing_state: TimingSt
     const sv = beatmap.Difficulty.SliderMultiplier;
     const tick_rate = beatmap.Difficulty.SliderTickRate;
     const scoring_distance = BASE_SCORING_DISTANCE * sv * sv_multiplier;
-    // pre-v8 beatmaps scale tick distance by sv multiplier
     const tick_distance_multiplier = beatmap.version < 8 ? 1 / sv_multiplier : 1;
     const tick_distance = (scoring_distance / tick_rate) * tick_distance_multiplier;
     const velocity = scoring_distance / timing_state.base_beat_length;
 
     return {
         tick_distance,
-        // 10ms worth of slider travel so end ticks don't overlap
         min_distance_from_end: velocity * 10
     };
 };

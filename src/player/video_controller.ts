@@ -39,7 +39,6 @@ export class VideoController {
 
         const video_time = (audio_time_ms - this._offset) / 1000;
 
-        // only sync if visible (after offset)
         if (video_time < 0) {
             if (!this.video.paused) {
                 this.video.pause();
@@ -47,7 +46,6 @@ export class VideoController {
             return;
         }
 
-        // check if video is out of sync
         const diff = Math.abs(this.video.currentTime - video_time);
 
         if (diff > 0.1) {
@@ -58,7 +56,7 @@ export class VideoController {
     play(): void {
         if (this.video && this.video.paused) {
             this.video.play().catch(() => {
-                console.log("failed to play video");
+                console.warn("[VideoController] failed to play video");
             });
         }
     }

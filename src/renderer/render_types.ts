@@ -22,5 +22,7 @@ export type RenderHitObject = OsuHitObject & {
     end_pos: Vec2;
     combo_number: number;
     combo_count: number;
+    stack_height: number;
+    stack_offset: Vec2;
     data: RenderObjectData;
 };

@@ -1,6 +1,6 @@
 import { type Vec2, vec2_add, vec2_sub, vec2_mul, vec2_len, vec2_lerp } from "./vector2";
 
-export const flatten_bezier = (points: Vec2[], tolerance: number = 0.08): Vec2[] => {
+export const flatten_bezier = (points: Vec2[], tolerance: number = 0.01): Vec2[] => {
     if (points.length < 2) return [...points];
 
     const result: Vec2[] = [];
@@ -41,16 +41,20 @@ const is_flat_enough = (points: Vec2[], tolerance: number): boolean => {
 };
 
 const point_to_line_dist = (point: Vec2, line_start: Vec2, line_end: Vec2): number => {
-    const line = vec2_sub(line_end, line_start);
-    const len_sq = line[0] * line[0] + line[1] * line[1];
+    const line_x = line_end[0] - line_start[0];
+    const line_y = line_end[1] - line_start[1];
+    const len_sq = line_x * line_x + line_y * line_y;
 
-    if (len_sq === 0) return vec2_len(vec2_sub(point, line_start));
+    if (len_sq === 0) {
+        const dx = point[0] - line_start[0];
+        const dy = point[1] - line_start[1];
+        return Math.hypot(dx, dy);
+    }
 
-    const t = Math.max(0, Math.min(1, ((point[0] - line_start[0]) * line[0] + (point[1] - line_start[1]) * line[1]) / len_sq));
-
-    const proj: Vec2 = [line_start[0] + t * line[0], line_start[1] + t * line[1]];
-
-    return vec2_len(vec2_sub(point, proj));
+    const t = Math.max(0, Math.min(1, ((point[0] - line_start[0]) * line_x + (point[1] - line_start[1]) * line_y) / len_sq));
+    const proj_x = line_start[0] + t * line_x;
+    const proj_y = line_start[1] + t * line_y;
+    return Math.hypot(point[0] - proj_x, point[1] - proj_y);
 };
 
 const subdivide_bezier = (points: Vec2[], left: Vec2[], right: Vec2[]): void => {
@@ -110,8 +114,6 @@ export const flatten_perfect = (points: Vec2[], distance: number): Vec2[] => {
     if (ccw && arc_angle < 0) arc_angle += 2 * Math.PI;
     if (!ccw && arc_angle > 0) arc_angle -= 2 * Math.PI;
 
-    const arc_length = Math.abs(arc_angle) * radius;
-
     // match osu! arc approximation (max error ~= 0.1)
     let num_points = 2;
     if (radius * 2 > 0.1) {
@@ -136,7 +138,7 @@ export const flatten_perfect = (points: Vec2[], distance: number): Vec2[] => {
 const find_circle_center = (a: Vec2, b: Vec2, c: Vec2): Vec2 | null => {
     const d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
 
-    if (Math.abs(d) < 0.001) return null; // collinear
+    if (Math.abs(d) < 0.001) return null;
 
     const ux =
         ((a[0] * a[0] + a[1] * a[1]) * (b[1] - c[1]) + (b[0] * b[0] + b[1] * b[1]) * (c[1] - a[1]) + (c[0] * c[0] + c[1] * c[1]) * (a[1] - b[1])) / d;

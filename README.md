@@ -7,8 +7,9 @@ created to be used on [osu-stuff](https://github.com/mezleca/osu-stuff)
 
 - preview for standard and mania modes
 - basic configurable skin (colors, animations, toggles)
-- canvas backend (not the most performant due to the nature of canvas)
+- pixi/webgl renderer backend
 - beatmap parser (.osu, .osz files)
+- hitsounds resolved from mapset/skin files (no bundled default hitsound pack)
 
 ## supported mods
 
@@ -26,23 +27,29 @@ created to be used on [osu-stuff](https://github.com/mezleca/osu-stuff)
 import { BeatmapPlayer, get_available_mods } from "osu-beatmap-preview";
 
 const player = new BeatmapPlayer({ canvas });
-await player.load(oszFile);
+await player.load_osz(oszFile);
 player.play();
 
 // get mods for current gamemode
 const mods = get_available_mods("standard");
 ```
 
-## skin config
+## skin loading
 
 ```typescript
-player.set_skin({
-    combo_colors: ["255,0,0", "0,255,0"],
-    enable_slider_ball: false,
-    enable_hit_animations: true,
-    follow_circle_color: "#ff8800",
-    ...
-});
+// load external skin archive (.osk)
+await player.load_skin_osk(osk_arr_buffer);
+
+// or load extracted files
+await player.load_skin_files(
+    new Map<string, ArrayBuffer | string>([
+        ["skin.ini", text],
+        ["hitcircle.png", hitcirclebytes]
+    ])
+);
+
+// reset to bundled default-skin
+player.clear_loaded_skin();
 ```
 
 ## events
@@ -52,4 +59,12 @@ player.on("play", () => console.log("playing"));
 player.on("pause", () => console.log("paused"));
 player.on("seek", (time) => console.log("seeked to", time));
 player.on("timeupdate", (time, duration) => {});
+```
+
+## assets
+
+- default skin assets are a mixture of elements from [owc remake](https://skins.osuck.net/skins/3301) and the default skin from osu! stable (mostly hitsounds)
+
+```
+
 ```

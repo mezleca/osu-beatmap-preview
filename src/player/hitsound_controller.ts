@@ -2,8 +2,6 @@ import { SampleSet, HitSoundType } from "../types/beatmap";
 import { AudioNodeController } from "./audio_node_controller";
 
 export class HitsoundController extends AudioNodeController {
-    private static default_samples: Map<string, AudioBuffer> = new Map();
-    private static default_loads: Map<string, Promise<void>> = new Map();
     private custom_samples: Map<string, AudioBuffer> = new Map();
 
     constructor(context: AudioContext) {
@@ -12,16 +10,12 @@ export class HitsoundController extends AudioNodeController {
 
     async load_samples(urls: string[]): Promise<void> {
         this.custom_samples.clear();
-        await this.load_into_cache(urls, this.custom_samples, false);
+        await this.load_into_cache(urls, this.custom_samples);
     }
 
     async load_samples_from_files(files: Map<string, ArrayBuffer>): Promise<void> {
         this.custom_samples.clear();
         await this.load_files_into_cache(files, this.custom_samples);
-    }
-
-    async load_default_samples(urls: string[]): Promise<void> {
-        await this.load_into_cache(urls, HitsoundController.default_samples, true);
     }
 
     clear(): void {
@@ -76,7 +70,7 @@ export class HitsoundController extends AudioNodeController {
     }
 
     private play_buffer(key: string, volume: number, when: number): boolean {
-        const buffer = this.custom_samples.get(key) ?? HitsoundController.default_samples.get(key);
+        const buffer = this.custom_samples.get(key);
         if (!buffer) return false;
 
         const source = this.audio_context.createBufferSource();
@@ -115,7 +109,7 @@ export class HitsoundController extends AudioNodeController {
         return file_name.toLowerCase().replace(/\.(wav|mp3|ogg)$/, "");
     }
 
-    private async load_into_cache(urls: string[], target: Map<string, AudioBuffer>, use_shared_loads: boolean): Promise<void> {
+    private async load_into_cache(urls: string[], target: Map<string, AudioBuffer>): Promise<void> {
         if (urls.length == 0) {
             return;
         }
@@ -132,29 +126,11 @@ export class HitsoundController extends AudioNodeController {
                 return;
             }
 
-            if (!use_shared_loads) {
-                await this.load_single_sample(url, key, target, failed);
-                return;
-            }
-
-            const pending = HitsoundController.default_loads.get(key);
-            if (pending) {
-                await pending;
-                return;
-            }
-
-            const task = this.load_single_sample(url, key, target, failed).finally(() => {
-                HitsoundController.default_loads.delete(key);
-            });
-            HitsoundController.default_loads.set(key, task);
-            await task;
+            await this.load_single_sample(url, key, target, failed);
         });
 
         await Promise.all(load_tasks);
-
-        if (failed.length > 0) {
-            console.warn(`[HitsoundController] Failed to load ${failed.length} hitsounds`);
-        }
+        this.report_failures(failed.length, target.size);
     }
 
     private async load_single_sample(url: string, key: string, target: Map<string, AudioBuffer>, failed: string[]): Promise<void> {
@@ -184,33 +160,37 @@ export class HitsoundController extends AudioNodeController {
         }
 
         const failed: string[] = [];
-        const load_tasks = [...files.entries()].map(async ([name, data]) => {
-            const key = this.get_sample_key_from_url(name);
-            if (!key) {
-                return;
-            }
+        const load_tasks: Promise<void>[] = [];
+        for (const [name, data] of files) {
+            load_tasks.push(
+                (async () => {
+                    const key = this.get_sample_key_from_url(name);
+                    if (!key || target.has(key)) {
+                        return;
+                    }
 
-            if (target.has(key)) {
-                return;
-            }
+                    if (data.byteLength < 128) {
+                        failed.push(name);
+                        return;
+                    }
 
-            if (data.byteLength < 128) {
-                failed.push(name);
-                return;
-            }
-
-            try {
-                const audio_buffer = await this.audio_context.decodeAudioData(data.slice(0));
-                target.set(key, audio_buffer);
-            } catch {
-                failed.push(name);
-            }
-        });
+                    try {
+                        const audio_buffer = await this.audio_context.decodeAudioData(data.slice(0));
+                        target.set(key, audio_buffer);
+                    } catch {
+                        failed.push(name);
+                    }
+                })()
+            );
+        }
 
         await Promise.all(load_tasks);
+        this.report_failures(failed.length, target.size);
+    }
 
-        if (failed.length > 0) {
-            console.warn(`[HitsoundController] Failed to load ${failed.length} hitsounds`);
+    private report_failures(failed_count: number, loaded_count: number): void {
+        if (failed_count > 0 && loaded_count === 0) {
+            console.warn(`[HitsoundController] Failed to load ${failed_count} hitsounds`);
         }
     }
 

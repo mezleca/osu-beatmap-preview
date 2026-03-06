@@ -66,4 +66,4 @@ package-lock.json
 /lib/
 bun.lock
 dist/
-/osu/
+/extra

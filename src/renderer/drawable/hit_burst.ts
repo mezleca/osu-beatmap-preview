@@ -7,6 +7,8 @@ import { Easing } from "./transforms";
 import { Mods, has_mod } from "../../types/mods";
 import { get_pre_hit_alpha } from "./circle_visual";
 
+const BURST_SCALE_REDUCTION = 0.8;
+
 type hit_burst_state = {
     alpha: number;
     scale: number;
@@ -36,11 +38,24 @@ export class HitBurstEffect {
         const base_alpha = has_mod(config.mods, Mods.Hidden) ? clamp(pre_hit_alpha, 0, 1) : clamp(Math.max(pre_hit_alpha, 0.25), 0, 1);
 
         const elapsed = time - hit_time;
-        const duration = Math.max(70, config.skin.hitburst_duration);
+        const duration = Math.max(44, config.skin.hitburst_duration * 0.52);
         const progress = clamp(elapsed / duration, 0, 1);
-        const burst_alpha = 1 - Easing.OutQuint(progress);
-        this.state.alpha = has_mod(config.mods, Mods.Hidden) ? burst_alpha * base_alpha : burst_alpha;
-        this.state.scale = lerp(1, config.skin.hitburst_scale, Easing.OutCubic(progress));
+        const fade_out_alpha = 1 - Easing.OutQuint(progress);
+        const fade_in_duration = Math.max(24, duration * 0.3);
+        const fade_in_progress = clamp(elapsed / fade_in_duration, 0, 1);
+        const burst_alpha = Easing.OutQuad(fade_in_progress) * fade_out_alpha;
+        this.state.alpha = has_mod(config.mods, Mods.Hidden) ? burst_alpha * base_alpha * 0.78 : burst_alpha * 0.78;
+
+        const target_scale = Math.max(1, config.skin.hitburst_scale * BURST_SCALE_REDUCTION);
+        const pop_duration = Math.max(24, duration * 0.2);
+        const pop_target_scale = Math.min(1.06, target_scale);
+        if (elapsed <= pop_duration) {
+            const pop_progress = clamp(elapsed / pop_duration, 0, 1);
+            this.state.scale = lerp(0.96, pop_target_scale, Easing.OutCubic(pop_progress));
+        } else {
+            const expand_progress = clamp((elapsed - pop_duration) / Math.max(1, duration - pop_duration), 0, 1);
+            this.state.scale = lerp(pop_target_scale, target_scale, Easing.OutCubic(expand_progress));
+        }
     }
 
     render(backend: IRenderBackend, skin: ISkinConfig, position: Vec2, radius: number, combo_color: string): void {

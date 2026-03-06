@@ -41,18 +41,16 @@ export class TimingStateResolver {
             if (point.time > time) break;
 
             if (point.uninherited === 1 && point.beatLength > 0) {
-                // red line: updates base beat length and resets sv multiplier
                 this.base_beat_length = point.beatLength;
                 this.sv_multiplier = 1;
             } else if (point.uninherited === 0 && point.beatLength < 0) {
-                // green line: negative beatLength encodes slider velocity
                 const velocity = -100 / point.beatLength;
                 if (velocity > 0) {
                     this.sv_multiplier = velocity;
                 }
             }
 
-            this.index = i;
+            this.index = i + 1;
         }
 
         this.last_time = time;

@@ -1,6 +1,5 @@
 import type { OsuFileFormat, HitObject, TimingPoint, HitSample, CurvePoint } from "@rel-packages/osu-beatmap-parser";
 
-// game modes
 export enum GameMode {
     Standard = 0,
     Taiko = 1,
