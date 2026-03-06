@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { PlayerHitsoundScheduler } from "../src/player/player_hitsound_scheduler";
+import { PlayerHitsoundScheduler } from "../src/player/player_hitsound";
 import { SampleSet, type ITimingPoint } from "../src/types/beatmap";
 
 const make_timing_point = (time: number, sample_index: number): ITimingPoint => ({
