@@ -7,6 +7,7 @@ import { get_combo_color } from "../../skin/skin_config";
 import { clamp, vec2_len, vec2_sub, vec2_lerp, type Vec2 } from "../../math/vector2";
 import { Mods, has_mod } from "../../types/mods";
 import { generate_slider_events, type SliderRepeatEvent, type SliderTickEvent } from "../standard/slider_events";
+import { compute_slider_path } from "../standard/slider_path";
 
 const FADE_OUT_DURATION = 240;
 const ARROW_SCALE_AMOUNT = 1.3;
@@ -48,6 +49,8 @@ export class DrawableSlider extends Drawable {
     private cached_scale: number = 1;
     private tick_entries: TickEntry[] = [];
     private tick_entries_by_start: TickEntry[] = [];
+    private nested_objects_built = false;
+    private path_ready = false;
 
     constructor(
         hit_object: RenderHitObject,
@@ -59,18 +62,18 @@ export class DrawableSlider extends Drawable {
     ) {
         super(hit_object, config);
         this.slider_data = hit_object.data as RenderSliderData;
-        const resample_step = Math.max(0.2, config.radius * 0.01);
-        this.position_path = path;
-        this.render_path = this.resample_path(path, resample_step);
+        const resample_step = Math.max(1.0, config.radius * 0.03);
+        const sampled_path = path.length > 1 ? this.resample_path(path, resample_step) : [];
+        this.position_path = sampled_path;
+        this.render_path = sampled_path;
         this.span_duration = span_duration;
         this.tick_distance = tick_distance;
         this.min_distance_from_end = min_distance_from_end;
-        const calculated_length = this.calculate_path_length();
+        const calculated_length = sampled_path.length > 1 ? this.calculate_path_length() : 0;
         this.path_length = this.slider_data.distance > 0 ? this.slider_data.distance : calculated_length;
         this.ball_position = this.slider_data.pos;
         this.slider_ball_frame_delay = this.compute_slider_ball_frame_delay();
-
-        this.build_nested_objects();
+        this.path_ready = sampled_path.length > 1;
 
         this.life_time_end = hit_object.end_time + FADE_OUT_DURATION;
     }
@@ -155,6 +158,14 @@ export class DrawableSlider extends Drawable {
 
     update(time: number): void {
         super.update(time);
+        if (!this.path_ready && time >= this.hit_object.time - this.config.preempt - 300) {
+            this.ensure_path_ready();
+        }
+        if (!this.nested_objects_built && time >= this.hit_object.time - this.config.preempt - 250) {
+            this.ensure_path_ready();
+            this.build_nested_objects();
+            this.nested_objects_built = true;
+        }
         this.calculate_ball_position(time);
         this.calculate_opacities(time);
         this.head_visual.update(time, this.hit_object.time, this.config);
@@ -174,6 +185,12 @@ export class DrawableSlider extends Drawable {
         }
 
         if (time <= hit_object.end_time) {
+            if (!this.path_ready) {
+                this.ball_alpha = 0;
+                this.follow_alpha = 0;
+                this.follow_scale = 1;
+                return;
+            }
             const elapsed = time - hit_object.time;
             const span_count = Math.max(1, this.slider_data.repetitions);
             const span_index = Math.min(Math.floor(elapsed / span_duration), span_count - 1);
@@ -201,11 +218,17 @@ export class DrawableSlider extends Drawable {
     }
 
     private get_position_at_progress(progress: number): Vec2 {
+        if (!this.path_ready) {
+            return this.slider_data.pos;
+        }
         const target_length = progress * this.path_length;
         return this.get_position_at_length(target_length);
     }
 
     private get_position_at_length(target_length: number): Vec2 {
+        if (!this.path_ready || this.position_path.length === 0) {
+            return this.slider_data.pos;
+        }
         let accumulated = 0;
         for (let i = 1; i < this.position_path.length; i++) {
             const segment_length = vec2_len(vec2_sub(this.position_path[i], this.position_path[i - 1]));
@@ -283,7 +306,9 @@ export class DrawableSlider extends Drawable {
     }
 
     private render_body(time: number): void {
-        if (this.body_alpha <= 0.01 || this.render_path.length < 2) return;
+        if (this.body_alpha <= 0.01) return;
+        this.ensure_path_ready();
+        if (this.render_path.length < 2) return;
 
         const { backend } = this;
         this.prepare_body_cache();
@@ -341,6 +366,7 @@ export class DrawableSlider extends Drawable {
     }
 
     prepare_body_cache(): void {
+        this.ensure_path_ready();
         if (this.render_path.length < 2) {
             return;
         }
@@ -391,6 +417,12 @@ export class DrawableSlider extends Drawable {
     }
 
     estimate_complexity(): number {
+        if (!this.path_ready) {
+            return 1;
+        }
+        if (!this.nested_objects_built) {
+            return this.render_path.length;
+        }
         return this.render_path.length + this.ticks.length * 8 + this.repeats.length * 16;
     }
 
@@ -402,6 +434,29 @@ export class DrawableSlider extends Drawable {
         this.repeats = [];
         this.tick_entries = [];
         this.tick_entries_by_start = [];
+    }
+
+    private ensure_path_ready(): void {
+        if (this.path_ready) {
+            return;
+        }
+
+        const path = compute_slider_path(this.slider_data);
+        if (path.length < 2) {
+            this.position_path = [];
+            this.render_path = [];
+            this.path_length = 0;
+            this.path_ready = false;
+            return;
+        }
+
+        const resample_step = Math.max(1.0, this.config.radius * 0.03);
+        const sampled_path = this.resample_path(path, resample_step);
+        this.position_path = sampled_path;
+        this.render_path = sampled_path;
+        const calculated_length = this.calculate_path_length();
+        this.path_length = this.slider_data.distance > 0 ? this.slider_data.distance : calculated_length;
+        this.path_ready = this.position_path.length > 1;
     }
 
     private render_ticks(time: number): void {

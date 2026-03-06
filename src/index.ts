@@ -20,4 +20,4 @@ export { BaseRenderer, type IRendererConfig, DEFAULT_RENDERER_CONFIG, GridLevel,
 export { StandardRenderer } from "./renderer/standard/standard_renderer";
 export { ManiaRenderer } from "./renderer/mania/mania_renderer";
 
-export { get_default_skin_folder_manifest_url, resolve_runtime_asset_url } from "./assets/assets";
+export { resolve_runtime_asset_url } from "./assets/assets";

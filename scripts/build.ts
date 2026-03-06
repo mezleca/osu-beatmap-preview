@@ -4,7 +4,7 @@ const OUT_DIR = "./dist";
 
 (async () => {
     try {
-        rmSync(OUT_DIR, { recursive: true });
+        rmSync(OUT_DIR, { recursive: true, force: true });
     } catch {
         console.log("[warn] failed to clean dist directory");
     }

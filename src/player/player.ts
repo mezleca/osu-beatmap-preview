@@ -329,6 +329,7 @@ export class BeatmapPlayer {
         if (audio) {
             try {
                 await this.audio.load(audio, this.resolve_speed_multiplier());
+                this.release_loaded_audio_bytes();
             } catch (e) {
                 const reason = e instanceof Error ? e.message : String(e);
                 this.emit("error", ErrorCode.AudioDecodeError, reason);
@@ -413,6 +414,24 @@ export class BeatmapPlayer {
         }
         if (!this.resources.video_offset && assets.video_offset) {
             this.resources.video_offset = assets.video_offset;
+        }
+    }
+
+    private release_loaded_audio_bytes(): void {
+        if (!this.resources) {
+            return;
+        }
+
+        this.resources.audio = undefined;
+        const audio_filename = this.resources.audio_filename?.toLowerCase();
+        if (!audio_filename) {
+            return;
+        }
+
+        for (const key of Array.from(this.resources.files.keys())) {
+            if (key.toLowerCase() === audio_filename) {
+                this.resources.files.delete(key);
+            }
         }
     }
 

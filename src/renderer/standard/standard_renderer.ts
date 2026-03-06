@@ -11,7 +11,7 @@ import { get_combo_color } from "../../skin/skin_config";
 import { Drawable, DrawableHitCircle, DrawableSlider, type DrawableConfig } from "../drawable";
 import { Easing } from "../drawable/transforms";
 import { FollowPointRenderer } from "./follow_points";
-import { compute_slider_path, get_slider_end_position } from "./slider_path";
+import { get_slider_end_position } from "./slider_path";
 import { calculate_slider_duration, calculate_tick_spacing } from "./slider_math";
 import { TimingStateResolver } from "./timing_state";
 import { STANDARD_RUNTIME_DEFAULTS } from "../../config/standard";
@@ -113,14 +113,13 @@ export class StandardRenderer extends BaseRenderer {
                     data.control_points = data.control_points.map((p) => [p[0], flip_y(p[1])] as [number, number]);
                 }
 
-                data.computed_path = compute_slider_path(data);
-
                 const timing_state = this.timing_resolver?.get_state_at(obj.time) ?? { base_beat_length: 600, sv_multiplier: 1 };
                 const duration = calculate_slider_duration(data.distance, this.beatmap, timing_state);
 
                 data.duration = duration;
                 obj.end_time = obj.time + duration * data.repetitions;
-                obj.end_pos = get_slider_end_position(data);
+                const fallback_end = data.control_points.length > 0 ? data.control_points[data.control_points.length - 1] : data.pos;
+                obj.end_pos = data.computed_path && data.computed_path.length > 0 ? get_slider_end_position(data) : fallback_end;
             } else if (is_spinner(obj)) {
                 obj.end_pos = [256, 192];
             } else {
@@ -288,15 +287,22 @@ export class StandardRenderer extends BaseRenderer {
                 this.drawables.push(new DrawableHitCircle(obj, this.drawable_config));
             } else if (is_slider(obj)) {
                 const data = obj.data as RenderSliderData;
-                const path = data.computed_path || [];
                 const span_duration = data.duration || 0;
 
                 const timing_state = this.timing_resolver?.get_state_at(obj.time) ?? { base_beat_length: 600, sv_multiplier: 1 };
                 const { tick_distance, min_distance_from_end } = calculate_tick_spacing(this.beatmap, timing_state);
 
-                const slider = new DrawableSlider(obj, this.drawable_config, path, span_duration, tick_distance, min_distance_from_end);
+                const slider = new DrawableSlider(
+                    obj,
+                    this.drawable_config,
+                    data.computed_path || [],
+                    span_duration,
+                    tick_distance,
+                    min_distance_from_end
+                );
                 this.drawables.push(slider);
                 this.slider_drawables.push(slider);
+                data.computed_path = [];
             } else if (is_spinner(obj)) {
                 this.spinner_objects.push(obj);
             }

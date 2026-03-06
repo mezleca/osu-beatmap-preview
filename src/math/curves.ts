@@ -1,6 +1,6 @@
 import { type Vec2, vec2_add, vec2_sub, vec2_mul, vec2_len, vec2_lerp } from "./vector2";
 
-export const flatten_bezier = (points: Vec2[], tolerance: number = 0.01): Vec2[] => {
+export const flatten_bezier = (points: Vec2[], tolerance: number = 0.05): Vec2[] => {
     if (points.length < 2) return [...points];
 
     const result: Vec2[] = [];
@@ -160,7 +160,7 @@ export const flatten_catmull = (points: Vec2[]): Vec2[] => {
         const p3 = points[Math.min(points.length - 1, i + 2)];
 
         const segment_length = vec2_len(vec2_sub(p2, p1));
-        const segments = Math.max(8, Math.ceil(segment_length / 3));
+        const segments = Math.max(6, Math.ceil(segment_length / 4));
         for (let j = 0; j <= segments; j++) {
             const t = j / segments;
             result.push(catmull_point(p0, p1, p2, p3, t));
