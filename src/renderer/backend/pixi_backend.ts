@@ -1,14 +1,4 @@
-import {
-    Application,
-    Container,
-    Graphics,
-    Matrix,
-    Rectangle,
-    Sprite,
-    Texture,
-    TextureStyle,
-    type ICanvas
-} from "pixi.js";
+import { Application, Container, Graphics, Matrix, Rectangle, Sprite, Texture, TextureStyle, type ICanvas } from "pixi.js";
 import type { BLEND_MODES } from "pixi.js";
 import type { CompositeOperation, GradientStop, IRenderBackend, LineCap, LineJoin, RenderImage, TextAlign, TextBaseline } from "./render_backend";
 

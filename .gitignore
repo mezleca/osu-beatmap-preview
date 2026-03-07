@@ -68,3 +68,4 @@ bun.lock
 dist/
 /extra
 src/assets/default_skin_embedded.ts
+src/assets/default_skin_archive.ts

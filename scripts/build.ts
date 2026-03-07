@@ -16,8 +16,9 @@ const OUT_DIR = "./dist";
         outdir: OUT_DIR,
         target: "browser",
         format: "esm",
+        splitting: true,
         minify: true,
-        sourcemap: "external",
+        sourcemap: "none",
         external: ["jszip", "@rel-packages/osu-beatmap-parser/browser"]
     });
 
