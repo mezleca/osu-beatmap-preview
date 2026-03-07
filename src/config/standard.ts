@@ -7,9 +7,9 @@ export const STANDARD_RUNTIME_DEFAULTS = {
         bootstrap_total_ms: 120
     },
     slider_cache: {
-        max_entries: 72,
-        max_bytes: 96 * 1024 * 1024,
-        retention_ms: 14000,
+        max_entries: 40,
+        max_bytes: 48 * 1024 * 1024,
+        retention_ms: 8000,
         trim_interval_ms: 250
     },
     stack: {

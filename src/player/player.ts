@@ -530,6 +530,13 @@ export class BeatmapPlayer {
             this.emit("statechange", false);
             return;
         }
+
+        const synced_time = this.current_time;
+        this.start_offset = synced_time;
+        this.hitsound_scheduler.update_hit_index(synced_time);
+        this.video?.seek(synced_time);
+        this.video?.sync(synced_time);
+
         this.video?.play();
         this.start_render_loop();
         this.emit("play");

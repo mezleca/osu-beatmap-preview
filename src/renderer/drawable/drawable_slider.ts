@@ -27,6 +27,7 @@ type TickEntry = {
 
 export class DrawableSlider extends Drawable {
     private slider_data: RenderSliderData;
+    private pending_path: Vec2[] | null;
     private position_path: Vec2[];
     private render_path: Vec2[];
     private path_length: number;
@@ -62,18 +63,16 @@ export class DrawableSlider extends Drawable {
     ) {
         super(hit_object, config);
         this.slider_data = hit_object.data as RenderSliderData;
-        const resample_step = Math.max(1.0, config.radius * 0.03);
-        const sampled_path = path.length > 1 ? this.resample_path(path, resample_step) : [];
-        this.position_path = sampled_path;
-        this.render_path = sampled_path;
+        this.pending_path = path.length > 1 ? path : null;
+        this.position_path = [];
+        this.render_path = [];
         this.span_duration = span_duration;
         this.tick_distance = tick_distance;
         this.min_distance_from_end = min_distance_from_end;
-        const calculated_length = sampled_path.length > 1 ? this.calculate_path_length() : 0;
-        this.path_length = this.slider_data.distance > 0 ? this.slider_data.distance : calculated_length;
+        this.path_length = this.slider_data.distance > 0 ? this.slider_data.distance : 0;
         this.ball_position = this.slider_data.pos;
         this.slider_ball_frame_delay = this.compute_slider_ball_frame_delay();
-        this.path_ready = sampled_path.length > 1;
+        this.path_ready = false;
 
         this.life_time_end = hit_object.end_time + FADE_OUT_DURATION;
     }
@@ -416,6 +415,17 @@ export class DrawableSlider extends Drawable {
         this.cached_texture = null;
     }
 
+    release_path_cache(): void {
+        this.position_path = [];
+        this.render_path = [];
+        this.path_ready = false;
+        this.nested_objects_built = false;
+        this.ticks = [];
+        this.repeats = [];
+        this.tick_entries = [];
+        this.tick_entries_by_start = [];
+    }
+
     estimate_complexity(): number {
         if (!this.path_ready) {
             return 1;
@@ -428,6 +438,8 @@ export class DrawableSlider extends Drawable {
 
     dispose(): void {
         this.release_body_cache();
+        this.release_path_cache();
+        this.pending_path = null;
         this.position_path = [];
         this.render_path = [];
         this.ticks = [];
@@ -441,7 +453,8 @@ export class DrawableSlider extends Drawable {
             return;
         }
 
-        const path = compute_slider_path(this.slider_data);
+        const path = this.pending_path ?? compute_slider_path(this.slider_data);
+        this.pending_path = null;
         if (path.length < 2) {
             this.position_path = [];
             this.render_path = [];

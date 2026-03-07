@@ -15,9 +15,7 @@ export class TimingStateResolver {
 
     constructor(points: ITimingPoint[]) {
         this.points = points;
-        if (points.length > 0 && points[0].uninherited === 1 && points[0].beatLength > 0) {
-            this.base_beat_length = points[0].beatLength;
-        }
+        this.apply_initial_base_beat_length();
     }
 
     reset(): void {
@@ -25,6 +23,7 @@ export class TimingStateResolver {
         this.last_time = Number.NEGATIVE_INFINITY;
         this.base_beat_length = 600;
         this.sv_multiplier = 1;
+        this.apply_initial_base_beat_length();
     }
 
     get_state_at(time: number): TimingState {
@@ -60,5 +59,15 @@ export class TimingStateResolver {
             base_beat_length: this.base_beat_length,
             sv_multiplier: this.sv_multiplier
         };
+    }
+
+    private apply_initial_base_beat_length(): void {
+        for (let i = 0; i < this.points.length; i++) {
+            const point = this.points[i];
+            if (point.uninherited === 1 && point.beatLength > 0) {
+                this.base_beat_length = point.beatLength;
+                return;
+            }
+        }
     }
 }

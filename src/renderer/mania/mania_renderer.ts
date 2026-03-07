@@ -49,6 +49,13 @@ export class ManiaRenderer extends BaseRenderer {
     private lane_impacts: number[] = [];
     private last_press_time = Number.NEGATIVE_INFINITY;
 
+    private render_start_sorted: RenderHitObject[] = [];
+    private render_end_sorted: RenderHitObject[] = [];
+    private render_start_index = 0;
+    private render_end_index = 0;
+    private active_render_objects = new Set<RenderHitObject>();
+    private last_render_time = Number.NEGATIVE_INFINITY;
+
     private base_timing_points: Array<{ time: number; beat_length: number; meter: number }> = [];
 
     constructor(
@@ -68,8 +75,11 @@ export class ManiaRenderer extends BaseRenderer {
         this.key_count = this.resolve_key_count(beatmap);
         this.press_start_sorted = this.objects;
         this.press_end_sorted = this.objects.slice().sort((a, b) => a.end_time - b.end_time);
+        this.render_start_sorted = this.objects;
+        this.render_end_sorted = this.objects.slice().sort((a, b) => a.end_time - b.end_time);
         this.base_timing_points = this.extract_base_timing_points(beatmap);
         this.reset_pressed_state();
+        this.reset_render_state();
     }
 
     set_mods(mods: number): void {
@@ -177,6 +187,13 @@ export class ManiaRenderer extends BaseRenderer {
         this.last_press_time = Number.NEGATIVE_INFINITY;
     }
 
+    private reset_render_state(): void {
+        this.render_start_index = 0;
+        this.render_end_index = 0;
+        this.active_render_objects.clear();
+        this.last_render_time = Number.NEGATIVE_INFINITY;
+    }
+
     private add_pressed_object(obj: RenderHitObject): void {
         if (this.active_press_objects.has(obj)) {
             return;
@@ -240,6 +257,59 @@ export class ManiaRenderer extends BaseRenderer {
         }
 
         this.last_press_time = time;
+    }
+
+    private add_active_render_object(obj: RenderHitObject): void {
+        this.active_render_objects.add(obj);
+    }
+
+    private remove_active_render_object(obj: RenderHitObject): void {
+        this.active_render_objects.delete(obj);
+    }
+
+    private rebuild_active_render_state(time: number, lower_bound: number, upper_bound: number): void {
+        this.active_render_objects.clear();
+
+        for (let i = 0; i < this.objects.length; i++) {
+            const obj = this.objects[i];
+            if (obj.time > upper_bound) {
+                break;
+            }
+            if (obj.end_time >= lower_bound) {
+                this.add_active_render_object(obj);
+            }
+        }
+
+        this.render_start_index = 0;
+        while (this.render_start_index < this.render_start_sorted.length && this.render_start_sorted[this.render_start_index].time <= upper_bound) {
+            this.render_start_index++;
+        }
+
+        this.render_end_index = 0;
+        while (this.render_end_index < this.render_end_sorted.length && this.render_end_sorted[this.render_end_index].end_time < lower_bound) {
+            this.render_end_index++;
+        }
+    }
+
+    private update_active_render_state(time: number, lower_bound: number, upper_bound: number): void {
+        const requires_rebuild = !Number.isFinite(this.last_render_time) || time < this.last_render_time || time - this.last_render_time > 1000;
+        if (requires_rebuild) {
+            this.rebuild_active_render_state(time, lower_bound, upper_bound);
+            this.last_render_time = time;
+            return;
+        }
+
+        while (this.render_start_index < this.render_start_sorted.length && this.render_start_sorted[this.render_start_index].time <= upper_bound) {
+            this.add_active_render_object(this.render_start_sorted[this.render_start_index]);
+            this.render_start_index++;
+        }
+
+        while (this.render_end_index < this.render_end_sorted.length && this.render_end_sorted[this.render_end_index].end_time < lower_bound) {
+            this.remove_active_render_object(this.render_end_sorted[this.render_end_index]);
+            this.render_end_index++;
+        }
+
+        this.last_render_time = time;
     }
 
     private extract_base_timing_points(beatmap: IBeatmap): Array<{ time: number; beat_length: number; meter: number }> {
@@ -591,6 +661,8 @@ export class ManiaRenderer extends BaseRenderer {
         const x_offset = Math.floor((PLAYFIELD_WIDTH - total_width) / 2);
         const stage_bottom_height = this.get_stage_bottom_height(time, total_width);
         const frame_bottom = metrics.hit_pos + metrics.note_height + 5 + stage_bottom_height;
+        const lower_bound = time - metrics.note_height * 4;
+        const upper_bound = time + this.scroll_time + metrics.note_height * 4;
 
         this.render_background();
 
@@ -605,8 +677,8 @@ export class ManiaRenderer extends BaseRenderer {
         backend.draw_rect(x_offset, 0, total_width, metrics.hit_pos, "#000000");
         backend.set_alpha(1);
 
-        for (let i = 0; i < this.objects.length; i++) {
-            const obj = this.objects[i];
+        this.update_active_render_state(time, lower_bound, upper_bound);
+        for (const obj of this.active_render_objects) {
             if (is_hold(obj)) {
                 this.draw_hold_note(obj, time, x_offset, metrics);
             } else {

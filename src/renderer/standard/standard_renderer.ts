@@ -19,6 +19,7 @@ import { process_timing_points } from "../../beatmap/timing";
 import type { RenderHitObject, RenderSliderData } from "../render_types";
 import { build_render_objects } from "../render_objects";
 import type { StandardSkinElements } from "../../skin/skin_elements";
+import { LruCache } from "../../utils/lru";
 
 const flip_y = (y: number): number => 384 - y;
 
@@ -31,7 +32,7 @@ export class StandardRenderer extends BaseRenderer {
 
     private drawables: Drawable[] = [];
     private slider_drawables: DrawableSlider[] = [];
-    private slider_cache_lru: DrawableSlider[] = [];
+    private slider_cache: LruCache<DrawableSlider, number> = this.create_slider_cache(STANDARD_RUNTIME_DEFAULTS.slider_cache.max_entries);
     private precompute_focus_time = 0;
     private precompute_handle: number | null = null;
     private precompute_pause_until = 0;
@@ -309,6 +310,7 @@ export class StandardRenderer extends BaseRenderer {
         }
         this.slider_cache_limit = Math.min(STANDARD_RUNTIME_DEFAULTS.slider_cache.max_entries, this.slider_drawables.length);
         this.slider_cache_bytes = 0;
+        this.slider_cache = this.create_slider_cache(this.slider_cache_limit);
     }
 
     render(time: number): void {
@@ -364,6 +366,7 @@ export class StandardRenderer extends BaseRenderer {
         if (now - this.last_cache_trim_at >= STANDARD_RUNTIME_DEFAULTS.slider_cache.trim_interval_ms) {
             this.last_cache_trim_at = now;
             this.trim_slider_cache_by_time(time);
+            this.trim_slider_runtime_path_cache(time);
         }
 
         for (let i = 0; i < visible_sliders.length; i++) {
@@ -416,7 +419,7 @@ export class StandardRenderer extends BaseRenderer {
         }
         this.drawables = [];
         this.slider_drawables = [];
-        this.slider_cache_lru = [];
+        this.slider_cache.clear();
         this.slider_cache_bytes = 0;
         this.spinner_objects = [];
         this.frame_visible_drawables.length = 0;
@@ -549,55 +552,69 @@ export class StandardRenderer extends BaseRenderer {
             return;
         }
 
-        const index = this.slider_cache_lru.indexOf(slider);
-        if (index >= 0) {
-            this.slider_cache_lru.splice(index, 1);
-            this.slider_cache_lru.push(slider);
+        if (this.slider_cache.touch(slider)) {
             return;
         }
 
-        this.slider_cache_lru.push(slider);
-        this.slider_cache_bytes += slider.get_body_cache_bytes();
+        const bytes = slider.get_body_cache_bytes();
+        this.slider_cache.set(slider, bytes);
+        this.slider_cache_bytes += bytes;
         this.enforce_slider_cache_limit();
     }
 
     private enforce_slider_cache_limit(): void {
-        while (this.slider_cache_lru.length > this.slider_cache_limit || this.slider_cache_bytes > STANDARD_RUNTIME_DEFAULTS.slider_cache.max_bytes) {
-            const victim = this.slider_cache_lru.shift();
-            if (!victim) {
+        this.slider_cache.set_capacity(this.slider_cache_limit);
+
+        while (this.slider_cache_bytes > STANDARD_RUNTIME_DEFAULTS.slider_cache.max_bytes) {
+            if (!this.slider_cache.evict_oldest()) {
                 break;
             }
-            this.slider_cache_bytes -= victim.get_body_cache_bytes();
-            victim.release_body_cache();
         }
     }
 
     private trim_slider_cache_by_time(focus_time: number): void {
-        if (this.slider_cache_lru.length === 0) {
+        if (this.slider_cache.size === 0) {
             return;
         }
 
-        const retained: DrawableSlider[] = [];
-        let retained_bytes = 0;
-        for (let i = 0; i < this.slider_cache_lru.length; i++) {
-            const slider = this.slider_cache_lru[i];
+        const remove: DrawableSlider[] = [];
+        for (const [slider] of this.slider_cache.entries()) {
             if (!slider.has_body_cache()) {
+                remove.push(slider);
                 continue;
             }
 
             const delta = Math.abs(slider.start_time - focus_time);
             const keep = delta <= STANDARD_RUNTIME_DEFAULTS.slider_cache.retention_ms || slider.is_alive(focus_time);
-            if (keep) {
-                retained.push(slider);
-                retained_bytes += slider.get_body_cache_bytes();
-            } else {
-                slider.release_body_cache();
+            if (!keep) {
+                remove.push(slider);
             }
         }
 
-        this.slider_cache_lru = retained;
-        this.slider_cache_bytes = retained_bytes;
+        for (let i = 0; i < remove.length; i++) {
+            this.slider_cache.delete(remove[i]);
+        }
         this.enforce_slider_cache_limit();
+    }
+
+    private trim_slider_runtime_path_cache(focus_time: number): void {
+        const retention = STANDARD_RUNTIME_DEFAULTS.slider_cache.retention_ms;
+        for (let i = 0; i < this.slider_drawables.length; i++) {
+            const slider = this.slider_drawables[i];
+            const delta = Math.abs(slider.start_time - focus_time);
+            if (delta <= retention || slider.is_alive(focus_time)) {
+                continue;
+            }
+
+            slider.release_path_cache();
+        }
+    }
+
+    private create_slider_cache(max_entries: number): LruCache<DrawableSlider, number> {
+        return new LruCache<DrawableSlider, number>(max_entries, (slider, bytes) => {
+            this.slider_cache_bytes = Math.max(0, this.slider_cache_bytes - bytes);
+            slider.release_body_cache();
+        });
     }
 
     private draw_approach_circle(drawable: Drawable, time: number): void {

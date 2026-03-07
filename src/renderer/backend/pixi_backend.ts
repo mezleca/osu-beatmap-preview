@@ -1,6 +1,7 @@
 import { Application, Container, Graphics, Matrix, Rectangle, Sprite, Texture, TextureStyle, type ICanvas } from "pixi.js";
 import type { BLEND_MODES } from "pixi.js";
 import type { CompositeOperation, GradientStop, IRenderBackend, LineCap, LineJoin, RenderImage, TextAlign, TextBaseline } from "./render_backend";
+import { LruCache } from "../../utils/lru";
 
 type PathCommand =
     | { type: "move"; x: number; y: number }
@@ -41,6 +42,8 @@ type CachedTextTexture = {
 };
 
 const DEFAULT_COLOR: ParsedColor = { color: 0xffffff, alpha: 1 };
+const MAX_GRADIENT_CACHE_ENTRIES = 128;
+const MAX_TEXT_CACHE_ENTRIES = 192;
 
 export class PixiBackend implements IRenderBackend {
     private app: Application | null = null;
@@ -48,14 +51,26 @@ export class PixiBackend implements IRenderBackend {
     private state!: BackendState;
     private stack: BackendState[] = [];
     private texture_cache: Map<any, Texture> = new Map();
-    private gradient_texture_cache: Map<string, Texture> = new Map();
-    private text_texture_cache: Map<string, CachedTextTexture> = new Map();
+    private gradient_texture_cache = new LruCache<number, Texture>(MAX_GRADIENT_CACHE_ENTRIES, (_key, texture) => {
+        texture.destroy(true);
+    });
+    private text_texture_cache = new LruCache<string, CachedTextTexture>(MAX_TEXT_CACHE_ENTRIES, (_key, entry) => {
+        if (entry.texture !== Texture.WHITE) {
+            entry.texture.destroy(true);
+        }
+    });
     private _width = 0;
     private _height = 0;
     private _dpr = 1;
     private is_initialized = false;
     private context_lost_listener: ((event: Event) => void) | null = null;
     private context_restored_listener: (() => void) | null = null;
+    private sprite_pool: Sprite[] = [];
+    private sprite_pool_index = 0;
+    private graphics_pool: Graphics[] = [];
+    private graphics_pool_index = 0;
+    private container_pool: Container[] = [];
+    private container_pool_index = 0;
 
     get width(): number {
         return this._width;
@@ -125,10 +140,10 @@ export class PixiBackend implements IRenderBackend {
             return;
         }
 
-        const children = this.root.removeChildren();
-        for (let i = 0; i < children.length; i++) {
-            children[i].destroy({ children: true });
-        }
+        this.root.removeChildren();
+        this.sprite_pool_index = 0;
+        this.graphics_pool_index = 0;
+        this.container_pool_index = 0;
 
         this.reset_state();
     }
@@ -165,6 +180,21 @@ export class PixiBackend implements IRenderBackend {
         this.is_initialized = false;
         this.context_lost_listener = null;
         this.context_restored_listener = null;
+        for (let i = 0; i < this.sprite_pool.length; i++) {
+            this.sprite_pool[i].destroy();
+        }
+        this.sprite_pool.length = 0;
+        this.sprite_pool_index = 0;
+        for (let i = 0; i < this.graphics_pool.length; i++) {
+            this.graphics_pool[i].destroy({ context: true });
+        }
+        this.graphics_pool.length = 0;
+        this.graphics_pool_index = 0;
+        for (let i = 0; i < this.container_pool.length; i++) {
+            this.container_pool[i].destroy({ children: true });
+        }
+        this.container_pool.length = 0;
+        this.container_pool_index = 0;
     }
 
     draw_circle(x: number, y: number, radius: number, fill_color: string, stroke_color?: string, stroke_width?: number): void {
@@ -216,7 +246,7 @@ export class PixiBackend implements IRenderBackend {
 
     draw_rect_gradient(x: number, y: number, width: number, height: number, gradient: LinearGradient): void {
         const texture = this.get_or_create_gradient_texture(x, y, width, height, gradient);
-        const sprite = new Sprite(texture);
+        const sprite = this.get_sprite(texture);
         sprite.alpha = this.state.alpha;
         sprite.blendMode = this.state.blend_mode;
         sprite.setFromMatrix(this.compose_matrix(x, y, width / texture.width, height / texture.height));
@@ -238,7 +268,7 @@ export class PixiBackend implements IRenderBackend {
     ): void {
         const fill = parse_color(fill_color);
         const cached = this.get_or_create_text_texture(text, font, fill);
-        const sprite = new Sprite(cached.texture);
+        const sprite = this.get_sprite(cached.texture);
         sprite.alpha = fill.alpha * this.state.alpha;
         sprite.blendMode = this.state.blend_mode;
         let anchor_x = 0;
@@ -349,7 +379,7 @@ export class PixiBackend implements IRenderBackend {
 
         const mask = this.make_graphics();
         this.apply_path(mask, this.state.path);
-        const clip_container = new Container();
+        const clip_container = this.get_container();
         clip_container.mask = mask;
         this.state.container.addChild(mask);
         this.state.container.addChild(clip_container);
@@ -449,7 +479,7 @@ export class PixiBackend implements IRenderBackend {
             return;
         }
 
-        const sprite = new Sprite(texture);
+        const sprite = this.get_sprite(texture);
         sprite.alpha = this.state.alpha;
         sprite.blendMode = this.state.blend_mode;
 
@@ -477,7 +507,7 @@ export class PixiBackend implements IRenderBackend {
             source: texture.source,
             frame: new Rectangle(sx, sy, sw, sh)
         });
-        const sprite = new Sprite(part);
+        const sprite = this.get_sprite(part);
         sprite.alpha = this.state.alpha;
         sprite.blendMode = this.state.blend_mode;
         sprite.setFromMatrix(this.compose_matrix(dx, dy, dw / Math.max(1, sw), dh / Math.max(1, sh)));
@@ -670,11 +700,57 @@ export class PixiBackend implements IRenderBackend {
     }
 
     private make_graphics(): Graphics {
-        const g = new Graphics();
+        const g = this.get_graphics();
         g.blendMode = this.state.blend_mode;
         g.setFromMatrix(this.state.matrix);
         this.state.container.addChild(g);
         return g;
+    }
+
+    private get_sprite(texture: Texture): Sprite {
+        let sprite = this.sprite_pool[this.sprite_pool_index];
+        if (!sprite) {
+            sprite = new Sprite(texture);
+            this.sprite_pool.push(sprite);
+        } else {
+            sprite.texture = texture;
+            sprite.tint = 0xffffff;
+            sprite.alpha = 1;
+        }
+        sprite.anchor.set(0, 0);
+
+        this.sprite_pool_index += 1;
+        return sprite;
+    }
+
+    private get_graphics(): Graphics {
+        let graphics = this.graphics_pool[this.graphics_pool_index];
+        if (!graphics) {
+            graphics = new Graphics();
+            this.graphics_pool.push(graphics);
+        } else {
+            graphics.clear();
+            graphics.alpha = 1;
+            graphics.tint = 0xffffff;
+        }
+
+        this.graphics_pool_index += 1;
+        return graphics;
+    }
+
+    private get_container(): Container {
+        let container = this.container_pool[this.container_pool_index];
+        if (!container) {
+            container = new Container();
+            this.container_pool.push(container);
+        } else {
+            container.removeChildren();
+            container.mask = null;
+            container.alpha = 1;
+        }
+
+        this.container_pool_index += 1;
+        return container;
     }
 
     private apply_path(g: Graphics, path: PathCommand[]): void {
@@ -746,7 +822,7 @@ export class PixiBackend implements IRenderBackend {
     }
 
     private get_or_create_gradient_texture(x: number, y: number, width: number, height: number, gradient: LinearGradient): Texture {
-        const key = JSON.stringify({ x, y, width, height, gradient });
+        const key = make_gradient_cache_key(x, y, width, height, gradient);
         const cached = this.gradient_texture_cache.get(key);
         if (cached) {
             return cached;
@@ -839,16 +915,7 @@ export class PixiBackend implements IRenderBackend {
         }
         this.texture_cache.clear();
 
-        for (const texture of this.gradient_texture_cache.values()) {
-            texture.destroy(true);
-        }
         this.gradient_texture_cache.clear();
-
-        for (const entry of this.text_texture_cache.values()) {
-            if (entry.texture !== Texture.WHITE) {
-                entry.texture.destroy(true);
-            }
-        }
         this.text_texture_cache.clear();
     }
 
@@ -1091,4 +1158,52 @@ const composite_to_blend = (mode: CompositeOperation): BLEND_MODES => {
         default:
             return "normal";
     }
+};
+
+const fnv32_mix_u32 = (hash: number, value: number): number => {
+    hash ^= value >>> 0;
+    hash = Math.imul(hash, 16777619) >>> 0;
+    return hash >>> 0;
+};
+
+const quantize_1e3 = (value: number): number => {
+    if (!Number.isFinite(value)) {
+        return 0;
+    }
+    return Math.round(value * 1000) | 0;
+};
+
+const hash_string_u32 = (value: string): number => {
+    let hash = 2166136261 >>> 0;
+    for (let i = 0; i < value.length; i++) {
+        hash ^= value.charCodeAt(i);
+        hash = Math.imul(hash, 16777619) >>> 0;
+    }
+    return hash >>> 0;
+};
+
+const make_gradient_cache_key = (x: number, y: number, width: number, height: number, gradient: LinearGradient): number => {
+    let hash = 2166136261 >>> 0;
+    hash = fnv32_mix_u32(hash, quantize_1e3(width));
+    hash = fnv32_mix_u32(hash, quantize_1e3(height));
+    hash = fnv32_mix_u32(hash, quantize_1e3(gradient.x0 - x));
+    hash = fnv32_mix_u32(hash, quantize_1e3(gradient.y0 - y));
+    hash = fnv32_mix_u32(hash, quantize_1e3(gradient.x1 - x));
+    hash = fnv32_mix_u32(hash, quantize_1e3(gradient.y1 - y));
+    hash = fnv32_mix_u32(hash, gradient.stops.length);
+
+    for (let i = 0; i < gradient.stops.length; i++) {
+        const stop = gradient.stops[i];
+        hash = fnv32_mix_u32(hash, quantize_1e6(stop.offset));
+        hash = fnv32_mix_u32(hash, hash_string_u32(stop.color));
+    }
+
+    return hash >>> 0;
+};
+
+const quantize_1e6 = (value: number): number => {
+    if (!Number.isFinite(value)) {
+        return 0;
+    }
+    return Math.round(value * 1000000) | 0;
 };
