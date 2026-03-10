@@ -64,7 +64,3 @@ player.on("timeupdate", (time, duration) => {});
 ## assets
 
 - default skin assets are a mixture of elements from [owc remake](https://skins.osuck.net/skins/3301) and the default skin from osu! stable (mostly hitsounds)
-
-```
-
-```
