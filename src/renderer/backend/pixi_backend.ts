@@ -52,10 +52,12 @@ export class PixiBackend implements IRenderBackend {
     private stack: BackendState[] = [];
     private texture_cache: Map<any, Texture> = new Map();
     private gradient_texture_cache = new LruCache<number, Texture>(MAX_GRADIENT_CACHE_ENTRIES, (_key, texture) => {
-        texture.destroy(true);
+        if (texture && texture !== Texture.WHITE) {
+            texture.destroy(true);
+        }
     });
     private text_texture_cache = new LruCache<string, CachedTextTexture>(MAX_TEXT_CACHE_ENTRIES, (_key, entry) => {
-        if (entry.texture !== Texture.WHITE) {
+        if (entry && entry.texture && entry.texture !== Texture.WHITE) {
             entry.texture.destroy(true);
         }
     });
@@ -71,6 +73,7 @@ export class PixiBackend implements IRenderBackend {
     private graphics_pool_index = 0;
     private container_pool: Container[] = [];
     private container_pool_index = 0;
+    private is_disposed = false;
 
     get width(): number {
         return this._width;
@@ -160,7 +163,44 @@ export class PixiBackend implements IRenderBackend {
         this.app.renderer.resize(width, height);
     }
 
+    clear_caches(): void {
+        if (this.is_disposed) {
+            return;
+        }
+        this.clear_texture_caches();
+
+        for (let i = 0; i < this.sprite_pool.length; i++) {
+            this.safe_destroy(this.sprite_pool[i]);
+        }
+        this.sprite_pool.length = 0;
+        this.sprite_pool_index = 0;
+
+        for (let i = 0; i < this.graphics_pool.length; i++) {
+            this.safe_destroy(this.graphics_pool[i], { context: true });
+        }
+        this.graphics_pool.length = 0;
+        this.graphics_pool_index = 0;
+
+        for (let i = 0; i < this.container_pool.length; i++) {
+            this.safe_destroy(this.container_pool[i], { children: true });
+        }
+        this.container_pool.length = 0;
+        this.container_pool_index = 0;
+        this.stack = [];
+        this.state = {
+            matrix: new Matrix(),
+            alpha: 1,
+            blend_mode: "normal",
+            container: this.root ?? new Container(),
+            path: []
+        };
+    }
+
     dispose(): void {
+        if (this.is_disposed) {
+            return;
+        }
+        this.is_disposed = true;
         this.clear_texture_caches();
 
         if (this.app) {
@@ -181,17 +221,17 @@ export class PixiBackend implements IRenderBackend {
         this.context_lost_listener = null;
         this.context_restored_listener = null;
         for (let i = 0; i < this.sprite_pool.length; i++) {
-            this.sprite_pool[i].destroy();
+            this.safe_destroy(this.sprite_pool[i]);
         }
         this.sprite_pool.length = 0;
         this.sprite_pool_index = 0;
         for (let i = 0; i < this.graphics_pool.length; i++) {
-            this.graphics_pool[i].destroy({ context: true });
+            this.safe_destroy(this.graphics_pool[i], { context: true });
         }
         this.graphics_pool.length = 0;
         this.graphics_pool_index = 0;
         for (let i = 0; i < this.container_pool.length; i++) {
-            this.container_pool[i].destroy({ children: true });
+            this.safe_destroy(this.container_pool[i], { children: true });
         }
         this.container_pool.length = 0;
         this.container_pool_index = 0;
@@ -908,10 +948,10 @@ export class PixiBackend implements IRenderBackend {
 
     private clear_texture_caches(): void {
         for (const texture of this.texture_cache.values()) {
-            if (texture === Texture.WHITE) {
+            if (!texture || texture === Texture.WHITE) {
                 continue;
             }
-            texture.destroy(true);
+            this.safe_destroy(texture, true);
         }
         this.texture_cache.clear();
 
@@ -920,6 +960,19 @@ export class PixiBackend implements IRenderBackend {
     }
 
     private ensure_sprite_texture_limit(): void {}
+
+    private safe_destroy(target: any, options?: any): void {
+        if (!target || typeof target.destroy !== "function") {
+            return;
+        }
+        try {
+            if (options !== undefined) {
+                target.destroy(options);
+            } else {
+                target.destroy();
+            }
+        } catch {}
+    }
 }
 
 const parse_font = (font: string): { css: string; size: number } => {

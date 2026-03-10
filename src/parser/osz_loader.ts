@@ -27,20 +27,25 @@ export class OszLoader {
     async load_from_files(files: Map<string, ArrayBuffer | string>, options?: IOszLoaderOptions): Promise<IBeatmapResources> {
         await init_wasm();
 
-        const osu_files = [...files.keys()].filter((f) => f.toLowerCase().endsWith(".osu"));
+        const osu_files: string[] = [];
+        for (const name of files.keys()) {
+            if (name.toLowerCase().endsWith(".osu")) {
+                osu_files.push(name);
+            }
+        }
 
         if (osu_files.length === 0) {
             throw new Error("No .osu files found in beatmap");
         }
 
-        const available_difficulties = await Promise.all(
-            osu_files.map(async (file) => {
-                const content = files.get(file)!;
-                const data = this.to_bytes(content);
-                const beatmap = (await wasm_parse(data)) as IBeatmap;
-                return { filename: file, beatmap };
-            })
-        );
+        const available_difficulties: { filename: string; beatmap: IBeatmap }[] = [];
+        for (let i = 0; i < osu_files.length; i++) {
+            const file = osu_files[i];
+            const content = files.get(file)!;
+            const data = this.to_bytes(content);
+            const beatmap = (await wasm_parse(data)) as IBeatmap;
+            available_difficulties.push({ filename: file, beatmap });
+        }
 
         const selected_file = this.select_difficulty(osu_files, available_difficulties, options?.difficulty);
         const osu_content = files.get(selected_file)!;

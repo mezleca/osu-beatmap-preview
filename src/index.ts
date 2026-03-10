@@ -1,5 +1,5 @@
 export { BeatmapPlayer, type IPlayerOptions, type StartMode } from "./player/player";
-export { AudioController } from "./player/audio_controller";
+export { AudioEngine } from "./player/audio_engine";
 export { VideoController } from "./player/video_controller";
 
 export { OszLoader, type IOszLoaderOptions } from "./parser/osz_loader";

@@ -17,7 +17,6 @@
     let canvas: HTMLCanvasElement;
     let drop_zone: HTMLDivElement;
     let progress_el: HTMLDivElement;
-    let file_input: HTMLInputElement;
 
     let player: BeatmapPlayer | null = null;
     let resize_observer: ResizeObserver | null = null;
@@ -254,6 +253,51 @@
         }
     };
 
+    const unload = (): void => {
+        if (!player) {
+            return;
+        }
+
+        player.unload({ clear_backend_cache: true });
+        is_loaded = false;
+        is_playing = false;
+        difficulties = [];
+        selected_diff = "";
+        title = "Drop a .osz or .osu file to preview";
+        subtitle = "";
+        update_progress(0, 0);
+    };
+
+    const dispose_player = (): void => {
+        if (!player) {
+            return;
+        }
+
+        player.dispose();
+        player = null;
+        is_loaded = false;
+        is_playing = false;
+        difficulties = [];
+        selected_diff = "";
+        title = "Drop a .osz or .osu file to preview";
+        subtitle = "";
+        update_progress(0, 0);
+    };
+
+    const set_speed_mod = (mode: "dt" | "nc" | "ht" | null): void => {
+        active_mods &= ~speed_mod_mask;
+        if (mode === "dt") {
+            active_mods |= Mods.DoubleTime;
+        } else if (mode === "nc") {
+            active_mods |= Mods.Nightcore;
+        } else if (mode === "ht") {
+            active_mods |= Mods.HalfTime;
+        }
+
+        refresh_mods();
+        sync_rate_from_mods();
+    };
+
     const seek_by_click = (event: MouseEvent): void => {
         if (!player?.is_loaded) {
             return;
@@ -380,7 +424,7 @@
         <div class="controls">
             <label class="btn primary">
                 Open
-                <input bind:this={file_input} type="file" accept=".osz,.osu" on:change={on_file_input_change} />
+                <input type="file" accept=".osz,.osu" on:change={on_file_input_change} />
             </label>
             {#if difficulties.length > 1}
                 <select class="btn" value={selected_diff} on:change={on_diff_change}>
@@ -395,6 +439,8 @@
                 {is_playing ? "⏸" : "▶"}
             </button>
             <button class="btn" disabled={!is_loaded} on:click={stop}>⏹</button>
+            <button class="btn" disabled={!is_loaded} on:click={unload}>Unload</button>
+            <button class="btn" disabled={!player} on:click={dispose_player}>Dispose</button>
         </div>
     </div>
 
@@ -421,6 +467,23 @@
         <button bind:this={progress_el} class="progress" aria-label="Seek progress" on:click={seek_by_click} on:wheel={on_seek_wheel}>
             <div class="progress-fill" style:width={`${progress_pct}%`}></div>
         </button>
+        <div class="control speed-control">
+            <span class="label">Speed</span>
+            <div class="speed-buttons">
+                <button class="mod" class:active={has_mod(active_mods, Mods.DoubleTime)} on:click={() => set_speed_mod("dt")}>DT</button>
+                <button class="mod" class:active={has_mod(active_mods, Mods.Nightcore)} on:click={() => set_speed_mod("nc")}>NC</button>
+                <button class="mod" class:active={has_mod(active_mods, Mods.HalfTime)} on:click={() => set_speed_mod("ht")}>HT</button>
+                <button
+                    class="mod"
+                    class:active={!has_mod(active_mods, Mods.DoubleTime) &&
+                        !has_mod(active_mods, Mods.Nightcore) &&
+                        !has_mod(active_mods, Mods.HalfTime)}
+                    on:click={() => set_speed_mod(null)}
+                >
+                    OFF
+                </button>
+            </div>
+        </div>
         <div class="mods">
             {#each available_mods as mod}
                 <button class="mod" class:active={has_mod(active_mods, mod.value)} title={mod.name} on:click={() => toggle_mod_button(mod.value)}>
@@ -611,7 +674,17 @@
         gap: 4px;
     }
 
-    .mods .mod {
+    .speed-control {
+        min-width: 160px;
+    }
+
+    .speed-buttons {
+        display: flex;
+        gap: 4px;
+        flex-wrap: wrap;
+    }
+
+    .mod {
         background: #252530;
         border: 1px solid #3a3a45;
         color: #888;
@@ -622,11 +695,11 @@
         cursor: pointer;
     }
 
-    .mods .mod:hover {
+    .mod:hover {
         color: #fff;
     }
 
-    .mods .mod.active {
+    .mod.active {
         background: #5865f2;
         border-color: #5865f2;
         color: #fff;

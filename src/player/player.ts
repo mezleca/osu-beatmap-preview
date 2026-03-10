@@ -10,9 +10,9 @@ import type { IRenderBackend } from "../renderer/backend/render_backend";
 import { create_backend, type BackendType } from "../renderer/backend/backend_factory";
 import { StandardRenderer } from "../renderer/standard/standard_renderer";
 import { ManiaRenderer } from "../renderer/mania/mania_renderer";
-import { AudioController } from "./audio_controller";
 import { VideoController } from "./video_controller";
-import { HitsoundController } from "./hitsound_controller";
+import { AudioEngine } from "./audio_engine";
+import { Mods } from "../types/mods";
 import { type ISkinConfig, merge_skin } from "../skin/skin_config";
 import { BeatmapAssets } from "./beatmap_assets";
 import { process_timing_points } from "../beatmap/timing";
@@ -25,8 +25,8 @@ import { convert_skin_files, load_skin_osk_files, merge_hitsound_sources, merge_
 
 const PREVIEW_FALLBACK_RATIO = 0.42;
 const RESYNC_THRESHOLD_MS = 30;
-const DEBUG_SYNC_EMIT_INTERVAL_MS = 100;
 const DEFAULT_HITSOUND_LOOKAHEAD_MS = 100;
+const SPEED_MOD_MASK = Mods.DoubleTime | Mods.HalfTime | Mods.Nightcore;
 
 type PlayerEventMap = {
     timeupdate: [time: number, duration: number];
@@ -37,15 +37,6 @@ type PlayerEventMap = {
     play: [];
     pause: [];
     seek: [time: number];
-    debugsync: [
-        payload: {
-            audio_time_raw: number;
-            beatmap_time: number;
-            render_time: number;
-            drift_ms: number;
-            scheduled_hitsounds: number;
-        }
-    ];
 };
 
 type PlayerEvent = keyof PlayerEventMap;
@@ -70,7 +61,6 @@ export interface IPlayerOptions {
     max_frame_delta?: number;
     audio_resync_threshold_ms?: number;
     hitsound_lookahead_ms?: number;
-    debug_sync?: boolean;
 }
 
 export class BeatmapPlayer {
@@ -80,8 +70,7 @@ export class BeatmapPlayer {
     private renderer: BaseRenderer | null = null;
 
     private audio_context: AudioContext;
-    private audio: AudioController;
-    private hitsounds: HitsoundController;
+    private audio: AudioEngine;
     private video: VideoController | null = null;
 
     private resources: IBeatmapResources | null = null;
@@ -98,7 +87,6 @@ export class BeatmapPlayer {
     private music_volume: number;
     private hitsound_volume: number;
     private audio_offset: number;
-    private beatmap_audio_lead_in: number = 0;
     private background_url: string | null = null;
     private loaded_skin_elements: StandardSkinElements | null = null;
     private loaded_skin_dispose: (() => void) | null = null;
@@ -109,6 +97,7 @@ export class BeatmapPlayer {
 
     private listeners: Map<PlayerEvent, Set<(...args: unknown[]) => void>> = new Map();
     private is_loaded_flag: boolean = false;
+    private is_disposed_flag: boolean = false;
 
     private hitsound_scheduler: PlayerHitsoundScheduler;
     private timing_points: ITimingPoint[] = [];
@@ -126,8 +115,6 @@ export class BeatmapPlayer {
     private smoothed_delta = 0;
     private max_frame_delta = 100;
     private resync_threshold_ms = RESYNC_THRESHOLD_MS;
-    private debug_sync = false;
-    private debug_sync_last_emit_at = 0;
 
     private last_timestamp: number = 0;
     private smooth_time: number = 0;
@@ -167,13 +154,14 @@ export class BeatmapPlayer {
 
         this.audio_context = new audio_context_class();
 
-        this.audio = new AudioController(this.audio_context);
-        this.hitsounds = new HitsoundController(this.audio_context);
-        this.hitsound_scheduler = new PlayerHitsoundScheduler(this.audio, this.hitsounds);
+        this.audio = new AudioEngine(this.audio_context);
+        this.hitsound_scheduler = new PlayerHitsoundScheduler(this.audio, this.audio.hitsound_mixer);
         this.hitsound_scheduler.set_hitsound_lookahead(options.hitsound_lookahead_ms ?? DEFAULT_HITSOUND_LOOKAHEAD_MS);
+        this.hitsound_scheduler.set_nightcore_enabled((this.mods & Mods.Nightcore) !== 0);
+        void this.audio.set_pitch_preserve((this.mods & Mods.DoubleTime) !== 0 && (this.mods & Mods.Nightcore) === 0);
 
-        this.audio.set_volume(this.music_volume);
-        this.hitsounds.set_volume(this.hitsound_volume);
+        this.audio.set_music_volume(this.music_volume);
+        this.audio.set_hitsound_volume(this.hitsound_volume);
 
         if (options.auto_resize) {
             this.setup_auto_resize();
@@ -199,8 +187,6 @@ export class BeatmapPlayer {
         if (Number.isFinite(audio_resync_threshold_ms)) {
             this.resync_threshold_ms = Math.max(0, audio_resync_threshold_ms as number);
         }
-
-        this.debug_sync = options.debug_sync ?? false;
     }
 
     async load_osz(data: ArrayBuffer, difficulty?: number | string): Promise<Result<IBeatmapResources>> {
@@ -232,12 +218,12 @@ export class BeatmapPlayer {
     async load_custom_hitsounds(urls: string[]): Promise<void> {
         if (urls.length == 0) {
             console.warn("[BeatmapPlayer] No custom hitsound URLs were provided");
-            this.hitsounds.clear();
+            this.audio.clear_hitsounds();
             return;
         }
 
         try {
-            await this.hitsounds.load_samples(urls);
+            await this.audio.load_hitsounds(urls);
         } catch (e) {
             console.error("[BeatmapPlayer] Failed to load custom hitsounds:", e);
         }
@@ -253,15 +239,18 @@ export class BeatmapPlayer {
         const files = collect_map_custom_hitsound_files(this.resources.beatmap, merged_files, this.resources.audio_filename);
 
         if (files.size == 0) {
-            this.hitsounds.clear();
+            this.audio.clear_hitsounds();
             return;
         }
 
         try {
-            await this.hitsounds.load_samples_from_files(files);
+            await this.audio.load_hitsounds_from_files(files);
+            if (this.is_disposed_flag) {
+                return;
+            }
         } catch (e) {
             console.error("[BeatmapPlayer] Failed to load map custom hitsounds:", e);
-            this.hitsounds.clear();
+            this.audio.clear_hitsounds();
         }
     }
 
@@ -321,6 +310,9 @@ export class BeatmapPlayer {
         if (!this.resources) {
             return err(ErrorCode.NotLoaded, "No resources loaded");
         }
+        if (this.is_disposed_flag) {
+            return err(ErrorCode.Unknown, "Player was disposed");
+        }
 
         try {
             await this.backend_ready;
@@ -349,7 +341,6 @@ export class BeatmapPlayer {
             }
         }
 
-        this.beatmap_audio_lead_in = Math.max(0, beatmap.General.AudioLeadIn || 0);
         this.hitsound_scheduler.set_context(this.resources, this.timing_points, this.timing_resolver, this.get_effective_audio_offset());
         void this.load_map_custom_hitsounds();
 
@@ -396,6 +387,9 @@ export class BeatmapPlayer {
             this.background_url = URL.createObjectURL(this.resources.background);
             img.src = this.background_url;
             await img.decode();
+            if (this.is_disposed_flag || !this.renderer) {
+                return;
+            }
             this.renderer.set_background({
                 source: img,
                 width: img.width,
@@ -562,7 +556,15 @@ export class BeatmapPlayer {
         const speed = this.resolve_speed_multiplier();
 
         this.renderer?.set_mods(mods);
-        this.audio.set_speed(speed);
+        this.audio.set_rate(speed);
+        this.hitsound_scheduler.set_nightcore_enabled((mods & Mods.Nightcore) !== 0);
+        const was_playing = this.is_playing;
+        const current_time = this.current_time;
+        void this.audio.set_pitch_preserve((mods & Mods.DoubleTime) !== 0 && (mods & Mods.Nightcore) === 0).then(() => {
+            if (was_playing && this.audio.is_playing) {
+                this.restart_playback_time(current_time);
+            }
+        });
 
         if (this.is_loaded_flag) {
             requestAnimationFrame(() => this.render_frame(this.current_time));
@@ -576,11 +578,39 @@ export class BeatmapPlayer {
             this.custom_rate = Math.max(0.1, rate);
         }
 
-        this.audio.set_speed(this.resolve_speed_multiplier());
+        if (rate !== null && (this.mods & SPEED_MOD_MASK) !== 0) {
+            const was_playing = this.is_playing;
+            const current_time = this.current_time;
+            this.mods &= ~SPEED_MOD_MASK;
+            this.renderer?.set_mods(this.mods);
+            this.hitsound_scheduler.set_nightcore_enabled(false);
+            void this.audio.set_pitch_preserve(true).then(() => {
+                if (was_playing && this.audio.is_playing) {
+                    this.restart_playback_time(current_time);
+                }
+            });
+        }
+
+        this.audio.set_rate(this.resolve_speed_multiplier());
 
         if (this.is_loaded_flag) {
             requestAnimationFrame(() => this.render_frame(this.current_time));
         }
+    }
+
+    set_speed_mod(mode: "dt" | "nc" | "ht" | null): void {
+        let next_mods = this.mods & ~SPEED_MOD_MASK;
+
+        if (mode === "dt") {
+            next_mods |= Mods.DoubleTime;
+        } else if (mode === "nc") {
+            next_mods |= Mods.Nightcore;
+        } else if (mode === "ht") {
+            next_mods |= Mods.HalfTime;
+        }
+
+        this.custom_rate = null;
+        this.set_mods(next_mods);
     }
 
     seek(time_ms: number): void {
@@ -642,18 +672,38 @@ export class BeatmapPlayer {
         this.render_frame(0);
     }
 
-    dispose(): void {
+    unload(options?: { clear_backend_cache?: boolean }): void {
         this.stop();
-        this.backend.dispose();
-        this.audio.dispose();
-        this.hitsounds.dispose();
+        this.audio.clear_hitsounds();
         this.video?.dispose();
+        this.video = null;
         this.renderer?.dispose();
+        this.renderer = null;
+        this.resources = null;
+        this.is_loaded_flag = false;
+        this.timing_points = [];
+        this.timing_resolver = null;
+        this.hitsound_scheduler.set_context(null, [], null, this.get_effective_audio_offset());
+        this.release_loaded_skin();
 
         if (this.background_url) {
             URL.revokeObjectURL(this.background_url);
             this.background_url = null;
         }
+
+        if (options?.clear_backend_cache) {
+            this.backend.clear_caches?.();
+        }
+    }
+
+    dispose(): void {
+        if (this.is_disposed_flag) {
+            return;
+        }
+        this.is_disposed_flag = true;
+        this.unload();
+        this.backend.dispose();
+        this.audio.dispose();
 
         if (this.resize_observer) {
             this.resize_observer.disconnect();
@@ -682,7 +732,7 @@ export class BeatmapPlayer {
 
     get duration(): number {
         if (this.audio.duration > 0) {
-            return Math.max(0, this.audio.duration - this.beatmap_audio_lead_in);
+            return Math.max(0, this.audio.duration);
         }
 
         return this.get_last_object_time();
@@ -774,8 +824,15 @@ export class BeatmapPlayer {
 
         try {
             await this.ensure_default_skin_loaded();
+            if (this.is_disposed_flag) {
+                return;
+            }
             const skin_files = this.merge_skin_sources();
             const loaded_skin = await load_beatmap_skin(this.base_skin, skin_files);
+            if (this.is_disposed_flag) {
+                loaded_skin.dispose();
+                return;
+            }
 
             this.skin = loaded_skin.config;
             this.loaded_skin_elements = loaded_skin.elements;
@@ -889,12 +946,12 @@ export class BeatmapPlayer {
 
     set_volume(volume: number): void {
         this.music_volume = volume;
-        this.audio.set_volume(volume);
+        this.audio.set_music_volume(volume);
     }
 
     set_hitsound_volume(volume: number): void {
         this.hitsound_volume = volume;
-        this.hitsounds.set_volume(volume);
+        this.audio.set_hitsound_volume(volume);
     }
 
     set_offset(offset_ms: number): void {
@@ -935,6 +992,10 @@ export class BeatmapPlayer {
         this.smoothed_delta = 0;
 
         const loop = (timestamp: number) => {
+            if (this.is_disposed_flag) {
+                this.animation_frame = null;
+                return;
+            }
             if (!this.audio.is_playing) {
                 this.animation_frame = null;
                 return;
@@ -966,10 +1027,6 @@ export class BeatmapPlayer {
 
             const time = this.smooth_time;
             const scheduled_hitsounds = this.hitsound_scheduler.schedule_hitsounds(actual_audio_time);
-
-            if (this.debug_sync) {
-                this.emit_debug_sync(actual_audio_time, time, scheduled_hitsounds);
-            }
 
             this.render_frame(time);
             this.video?.sync(time);
@@ -1022,20 +1079,16 @@ export class BeatmapPlayer {
         this.backend.end_frame?.();
     }
 
-    private emit_debug_sync(actual_audio_time: number, render_time: number, scheduled_hitsounds: number): void {
-        const now = performance.now();
-        if (now - this.debug_sync_last_emit_at < DEBUG_SYNC_EMIT_INTERVAL_MS) {
-            return;
-        }
-
-        this.debug_sync_last_emit_at = now;
-        this.emit("debugsync", {
-            audio_time_raw: this.audio.current_time,
-            beatmap_time: actual_audio_time,
-            render_time,
-            drift_ms: render_time - actual_audio_time,
-            scheduled_hitsounds
-        });
+    private restart_playback_time(time: number): void {
+        this.audio.seek(this.to_track_time(time));
+        this.last_timestamp = performance.now();
+        this.smooth_time = time;
+        this.smoothed_delta = 0;
+        this.hitsound_scheduler.update_hit_index(time);
+        this.video?.seek(time);
+        this.video?.sync(time);
+        this.start_render_loop();
+        this.render_frame(time);
     }
 
     set_fps_counter(enabled: boolean): void {
@@ -1043,7 +1096,7 @@ export class BeatmapPlayer {
     }
 
     private get_effective_audio_offset(): number {
-        return this.audio_offset + this.beatmap_audio_lead_in;
+        return this.audio_offset;
     }
 
     private to_track_time(beatmap_time: number): number {
