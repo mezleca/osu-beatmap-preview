@@ -152,12 +152,19 @@ export class PlayerHitsoundScheduler {
 
         const timing_state = this.timing_resolver?.get_state_at(obj.time) ?? { base_beat_length: 600, sv_multiplier: 1 };
         const length = obj.length ?? 0;
-        const span_duration = calculate_slider_duration(length, beatmap, timing_state);
+        let span_duration = calculate_slider_duration(length, beatmap, timing_state);
         const span_count = Math.max(1, obj.slides || 1);
 
         if (span_duration <= 0 || length <= 0) {
             this.play_node_hitsound(obj.time, obj.hitSound, base, base.custom_filename);
             return;
+        }
+
+        if (obj.endTime && obj.endTime > obj.time && span_count > 0) {
+            const total_duration = obj.endTime - obj.time;
+            if (Number.isFinite(total_duration) && total_duration > 0) {
+                span_duration = total_duration / span_count;
+            }
         }
 
         const edge_sounds = obj.edgeSounds ?? [];
@@ -167,9 +174,11 @@ export class PlayerHitsoundScheduler {
             const node_time = obj.time + span_duration * i;
             const node_sound = edge_sounds.length > 0 ? (edge_sounds[i] ?? 0) : i == 0 ? obj.hitSound : 0;
             const node_sets = edge_sets.length > 0 ? edge_sets[i] : undefined;
-            const resolved = this.resolve_edge_sets(base, node_sets);
-            const custom = i == 0 ? base.custom_filename : undefined;
-            this.play_node_hitsound(node_time, node_sound, { ...base, ...resolved }, custom);
+            const node_timing = this.get_timing_point(node_time);
+            const node_sample = this.resolve_sample_settings(node_timing, obj.hitSample);
+            const resolved = this.resolve_edge_sets(node_sample, node_sets);
+            const custom = i == 0 ? node_sample.custom_filename : undefined;
+            this.play_node_hitsound(node_time, node_sound, { ...node_sample, ...resolved }, custom);
         }
 
         const spacing = calculate_tick_spacing(beatmap, timing_state);
@@ -184,8 +193,10 @@ export class PlayerHitsoundScheduler {
         });
 
         for (const tick of events.ticks) {
+            const tick_timing = this.get_timing_point(tick.time);
+            const tick_sample = this.resolve_sample_settings(tick_timing, obj.hitSample);
             const when = this.audio.get_host_time(tick.time + this.audio_offset);
-            this.hitsounds.play_sample(base.normal_set, "slidertick", base.index, base.volume, when);
+            this.hitsounds.play_sample(tick_sample.normal_set, "slidertick", tick_sample.index, tick_sample.volume, when);
         }
     }
 
@@ -267,6 +278,7 @@ export class PlayerHitsoundScheduler {
     }
 
     private get_timing_point(time: number): ITimingPoint {
+        const target_time = Math.round(time);
         const points = this.timing_points;
         if (points.length == 0) {
             return {
@@ -282,7 +294,7 @@ export class PlayerHitsoundScheduler {
         }
 
         for (let i = points.length - 1; i >= 0; i--) {
-            if (points[i].time <= time) {
+            if (points[i].time <= target_time) {
                 return points[i];
             }
         }

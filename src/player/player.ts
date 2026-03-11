@@ -1026,7 +1026,7 @@ export class BeatmapPlayer {
             }
 
             const time = this.smooth_time;
-            const scheduled_hitsounds = this.hitsound_scheduler.schedule_hitsounds(actual_audio_time);
+            this.hitsound_scheduler.schedule_hitsounds(actual_audio_time);
 
             this.render_frame(time);
             this.video?.sync(time);
